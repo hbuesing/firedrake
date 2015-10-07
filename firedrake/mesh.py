@@ -475,6 +475,21 @@ class Mesh(object):
             self._callback(self)
 
     @utils.cached_property
+    def cell_facets(self):
+        """Return a :class:`op2.Dat` that maps from a cell index to
+        the local facet numbers on each cell.
+
+        This has type :data:`np.int8`.  The ith local facet is
+        interior if the value of this array is 1, otherwise it is
+        exterior.
+        """
+        cell_facets = dmplex.cell_facets(self._plex, self._cell_numbering,
+                                         self.cell_closure)
+        nfacet = cell_facets.shape[1]
+        return op2.Dat(self.cell_set**nfacet, cell_facets, dtype=cell_facets.dtype,
+                       name="Cell-to-local-facet-map")
+
+    @utils.cached_property
     def exterior_facets(self):
         if self._plex.getStratumSize("exterior_facets", 1) > 0:
             # Compute the facet_numbering

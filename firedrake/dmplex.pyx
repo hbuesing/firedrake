@@ -21,6 +21,64 @@ include "dmplex.pxi"
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
+def cell_facets(PETSc.DM plex,
+                PETSc.Section cell_numbering,
+                np.ndarray[np.int32_t, ndim=2, mode="c"] cell_closures):
+    """
+    Compute a mapping from cells to local facet numbers on the cell.
+
+    This includes both interior and exterior facets.  The ith local
+    facet of cell c is encoded as:
+
+    .. code-block::
+
+       cell_facets[c, i]
+
+    if this result is :data:`0`, local facet :data:`i` is an exterior
+    facet, otherwise it is an interior facet.
+
+    :arg plex: The DMPlex object encapsulating the mesh topology
+    :arg cell_numbering: Section describing the global cell numbering.
+    :arg cell_closures: 2D array of ordered cell closures
+
+    """
+    cdef:
+        PetscInt c, cStart, cEnd, fi, cell, nfacet, p, nclosure
+        PetscInt f, fStart, fEnd, point
+        PetscBool is_exterior
+        const PetscInt *facets
+        DMLabel label
+        np.ndarray[np.int8_t, ndim=2, mode="c"] cell_facets
+
+    nclosure = cell_closures.shape[1]
+
+    cStart, cEnd = plex.getHeightStratum(0)
+    # WARNING, does not handle mixed element meshes
+    nfacet = plex.getConeSize(cStart)
+    fStart, fEnd = plex.getHeightStratum(1)
+    cell_facets = np.full((cEnd - cStart, nfacet), -1, dtype=np.int8)
+    CHKERR(DMPlexGetLabel(plex.dm, <const char *>"exterior_facets", &label))
+    for c in range(cStart, cEnd):
+        CHKERR(DMPlexGetCone(plex.dm, c, &facets))
+        CHKERR(PetscSectionGetOffset(cell_numbering.sec, c, &cell))
+        for f in range(nfacet):
+            fi = 0
+            CHKERR(DMLabelHasPoint(label, facets[f], &is_exterior))
+            for p in range(nclosure):
+                point = cell_closures[cell, p]
+                if point == facets[f]:
+                    if is_exterior:
+                        cell_facets[cell, fi] = 0
+                    else:
+                        cell_facets[cell, fi] = 1
+                    break
+                if fStart <= point < fEnd:
+                    fi += 1
+    return cell_facets
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
 def facet_numbering(PETSc.DM plex, kind,
                     np.ndarray[np.int32_t, ndim=1, mode="c"] facets,
                     PETSc.Section cell_numbering,

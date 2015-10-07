@@ -24,6 +24,8 @@ class CheckRestrictions(MultiFunction):
 firedrake.parameters["coffee"] = {}
 
 firedrake.parameters["pyop2_options"]["debug"] = True
+
+
 class Tensor(object):
     id = 0
 
@@ -34,11 +36,15 @@ class Tensor(object):
         self._coefficients = tuple(coefficients)
         shape = []
         shapes = {}
+        subshapes = {}
         for i, arg in enumerate(self._arguments):
             V = arg.function_space()
             shp = []
+            sub = []
             for fs in V:
                 shp.append(fs.fiat_element.space_dimension() * fs.cdim)
+                sub.append((fs.fiat_element.space_dimension(), fs.cdim))
+            subshapes[i] = sub
             shapes[i] = shp
             shape.append(sum(shp))
         self.shapes = shapes
@@ -388,6 +394,7 @@ def get_kernel(expr):
 
     coefficients = expr.coefficients()
     coeffmap = dict((c, ast.Symbol("w%d" % i)) for i, c in enumerate(coefficients))
+    facetcoeffmap = {}
     coords = None
     coordsym = ast.Symbol("coords")
     cellfacetsym = ast.Symbol("cell_facets")
@@ -428,6 +435,7 @@ def get_kernel(expr):
                 if ks[1] == "exterior_facet":
                     coeffs.append(ast.FlatBlock("&%s" % itsym))
                     tmpcoords = coordsym
+                    tmptensor = tensor
                     check = 0
                 else:
                     tmpsym = ast.Symbol("tmp_%s" % sym)
@@ -437,45 +445,50 @@ def get_kernel(expr):
                     block.append(ast.Decl("unsigned int", ast.Symbol(facetsym, (2, ))))
                     block.append(ast.Assign(ast.Symbol(facetsym, (0, )), itsym))
                     block.append(ast.Assign(ast.Symbol(facetsym, (1, )), itsym))
+                    def populate_buf(tmp, orig, origsym):
+                        arity = orig.cell_node_map().arity
+                        cdim = orig.dat.cdim
+                        statements.append(ast.Decl("double *", ast.Symbol(tmp, (arity*cdim*2, ))))
+                        i = ast.Symbol("i")
+                        j = ast.Symbol("j")
+                        inner = ast.For(ast.Decl("int", i, init=0),
+                                        ast.Less(i, arity),
+                                        ast.Incr(i, 1),
+                                        [ast.Assign(ast.Symbol(tmp, (ast.Sum(i,
+                                                                             ast.Prod(j, arity*cdim)), )),
+                                                    ast.Symbol(origsym, (ast.Sum(i, ast.Prod(j, 3)), ))),
+                                         ast.Assign(ast.Symbol(tmp, (ast.Sum(arity,
+                                                                             ast.Sum(i,
+                                                                                     ast.Prod(j, arity*cdim))), )),
+                                                    ast.Symbol(origsym, (ast.Sum(i, ast.Prod(j, 3)), )))])
+                        loop = ast.For(ast.Decl("int", j, init=0),
+                                       ast.Less(j, cdim),
+                                       ast.Incr(j, 1),
+                                       [inner])
+                        statements.append(loop)
                     tmpcoords = ast.Symbol("tmp_%s" % coordsym)
-                    size = coords.cell_node_map().arity * coords.dat.cdim
-                    statements.append(ast.Decl("double *", ast.Symbol(tmpcoords, (size*2, ))))
-                    i = ast.Symbol("i")
-                    loop = ast.For(ast.Decl("int", i, init=0),
-                            ast.Less(i, size),
-                            ast.Incr(i, 1),
-                            [ast.Assign(ast.Symbol(tmpcoords, (i, )),
-                                        ast.Symbol(coordsym, (ast.Div(i, 2), )))])
-                    statements.append(loop)
+                    populate_buf(tmpcoords, coords, coordsym)
                     tmpcoeffs = []
                     for c in ks[4]:
                         tmp = ast.Symbol("tmp_%s" % coeffmap[c])
                         tmpcoeffs.append(tmp)
-                        size = c.cell_node_map().arity * c.dat.cdim
-                        statements.append(ast.Decl("double *", ast.Symbol(tmp, (size*2, ))))
-                        i = ast.Symbol("i")
-                        loop = ast.For(ast.Decl("int", i, init=0),
-                                       ast.Less(i, 2*size),
-                                       ast.Incr(i, 1),
-                                       [ast.Assign(ast.Symbol(tmp, (i, )),
-                                                   ast.Symbol(coeffmap[c], (ast.Div(i, 2), )))])
-                        statements.append(loop)
+                        populate_buf(tmp, c, coeffmap[c])
                     coeffs = tmpcoeffs
                     coeffs.append(facetsym)
 
                     if (rshape, cshape) != exp.shape:
-                        tensor = ast.FlatBlock("%s.block<%d,%d>(%d, %d)" %
+                        tmptensor = ast.FlatBlock("%s.block<%d,%d>(%d, %d)" %
                                                (tmpsym, 2*rshape, 2*cshape,
                                                 2*rstart, 2*cstart))
                     else:
-                        tensor = tmpsym
+                        tmptensor = tmpsym
 
                     check = 1
                 block.append(
                     ast.If(ast.Eq(ast.Symbol(cellfacetsym, rank=(itsym, )),
                                   check),
                            [ast.Block([ast.FunCall(kernel.name,
-                                                   tensor, tmpcoords, *coeffs)],
+                                                   tmptensor, tmpcoords, *coeffs)],
                                       open_scope=True)])
                     )
                 loop = ast.For(ast.Decl("unsigned int", itsym, init=0),
@@ -483,6 +496,32 @@ def get_kernel(expr):
                                ast.Incr(itsym, 1),
                                block)
                 statements.append(loop)
+                if ks[1] == "interior_facet":
+                    # Increment back in VFS case needs to pull apart the blocks:
+                    # Consider a 2D VFS.  The tensor we passed in is:
+                    #
+                    # XX XY
+                    # YX YY
+                    #
+                    # Where each block is further divided into
+                    #
+                    # ++ -+
+                    # +- --
+                    #
+                    # We need to pull the ++ blocks out of each
+                    # subblock and splat them into the tensor we
+                    # actually want as:
+                    #
+                    # XX(++) XY(++)
+                    # YX(++) YY(++)
+                    #
+                    # To do this we spin over the vector dimenson for
+                    # the test and trial spaces and push into the
+                    # appropriate part
+                    tmptensor = ast.FlatBlock("%s.block<%d,%d>(%d, %d)" %
+                                              (tmpsym, rshape, cshape,
+                                               rstart, cstart))
+                    statements.append(ast.Incr(tensor, tmptensor))
             else:
                 statements.append(ast.FunCall(kernel.name,
                                               tensor,
@@ -600,11 +639,12 @@ def assemble(expr):
     return matrix
 
 
-mesh = firedrake.UnitSquareMesh(1, 1, quadrilateral=False)
+mesh = firedrake.UnitSquareMesh(2, 1, quadrilateral=False)
+degree = 1
 # RTe = firedrake.FiniteElement("RTCF", firedrake.quadrilateral, 1)
-RTe = firedrake.FiniteElement("RT", firedrake.triangle, 2)
+RTe = firedrake.FiniteElement("RT", firedrake.triangle, degree)
 BrokenRT = firedrake.FunctionSpace(mesh, firedrake.BrokenElement(RTe))
-DG = firedrake.FunctionSpace(mesh, "DG", 1)
+DG = firedrake.FunctionSpace(mesh, "DG", degree - 1)
 TraceRT = firedrake.FunctionSpace(mesh, firedrake.TraceElement(RTe))
 
 W = BrokenRT * DG
@@ -632,25 +672,46 @@ positive_trace = firedrake.dot(tau, n)('+')*lambdar('+')*firedrake.dS
 
 cell_hdiv = mass + div + grad
 Cell_hdiv = firedrake.assemble(cell_hdiv, nest=False).M.values
-
-Trace = Matrix(trace_ext)
+positive_trace = firedrake.dot(tau, n)('+')*lambdar('+')*firedrake.dS
+Trace = Matrix(positive_trace)
 
 X = Trace.T * Matrix(cell_hdiv).inv * Trace
-trace = firedrake.assemble(trace_ext, nest=False).M.values
+assemble(X)
+trace = firedrake.assemble(trace, nest=False).M.values
 glob = np.dot(trace.T, np.dot(np.linalg.inv(Cell_hdiv), trace))
 cellwise = assemble(X).values
 
-assert np.allclose(glob, cellwise)
-# Global Schur complement
-# [[  1.0000e+00   5.0000e-01   5.5511e-17   5.0000e-01]
-#  [  5.0000e-01   1.0000e+00   5.0000e-01   0.0000e+00]
-#  [  2.7756e-16   5.0000e-01   1.0000e+00   5.0000e-01]
-#  [  5.0000e-01   0.0000e+00   5.0000e-01   1.0000e+00]]
-# Cellwise schur complement
-# [[  1.0000e+00   5.0000e-01   1.3878e-16   5.0000e-01]
-#  [  5.0000e-01   1.0000e+00   5.0000e-01   0.0000e+00]
-#  [  1.3878e-16   5.0000e-01   1.0000e+00   5.0000e-01]
-#  [  5.0000e-01   0.0000e+00   5.0000e-01   1.0000e+00]]
+# print glob
+# print cellwise
+# print np.allclose(glob, cellwise)
 
 # print assemble(X).values
 # from IPython import embed; embed()
+
+# VFSes
+
+V = firedrake.VectorFunctionSpace(mesh, "DG", 1)
+Q = firedrake.FunctionSpace(mesh, "DG", 2)
+R = firedrake.FunctionSpace(mesh, "CG", 1)
+
+W = V*Q
+
+u = firedrake.TrialFunction(W)
+v = firedrake.TestFunction(W)
+
+a = firedrake.inner(u, v)*firedrake.dx
+b = firedrake.dot(v, firedrake.Constant((1, 1, 1)))*firedrake.TrialFunction(R)*firedrake.dx
+A = firedrake.assemble(a, nest=False).M.values
+B = firedrake.assemble(b, nest=False).M.values
+
+print A.shape, B.shape
+
+print np.dot(B.T, np.dot(np.linalg.inv(A), B))
+
+b = Matrix(b)
+
+print assemble(b.T * Matrix(a).inv * b).values
+# B = assemble(Matrix(a)).values
+
+#print A
+#print B

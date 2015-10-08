@@ -42,15 +42,11 @@ class Tensor(object):
         self._coefficients = tuple(coefficients)
         shape = []
         shapes = {}
-        subshapes = {}
         for i, arg in enumerate(self._arguments):
             V = arg.function_space()
             shp = []
-            sub = []
             for fs in V:
                 shp.append(fs.fiat_element.space_dimension() * fs.cdim)
-                sub.append((fs.fiat_element.space_dimension(), fs.cdim))
-            subshapes[i] = sub
             shapes[i] = shp
             shape.append(sum(shp))
         self.shapes = shapes

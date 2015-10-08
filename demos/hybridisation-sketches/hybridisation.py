@@ -296,8 +296,8 @@ class Mul(BinOp):
         elif isinstance(b, Scalar):
             return a.arguments()
         # Contraction over middle indices
-        assert a.arguments()[1].function_space() == b.arguments()[0].function_space()
-        return (a.arguments()[0], b.arguments()[1])
+        assert a.arguments()[-1].function_space() == b.arguments()[0].function_space()
+        return a.arguments()[:-1] + b.arguments()[1:]
 
 
 class TransformKernelTensor(Visitor):
@@ -357,12 +357,14 @@ def get_kernel(expr):
     kernels = {}
 
     needs_cell_facets = False
-    def matrix_type(shape, int_facet=False):
-        rows = shape[0]
-        cols = shape[1]
-        if int_facet:
-            rows *= 2
-            cols *= 2
+    def matrix_type(shape):
+        if len(shape) == 1:
+            rows = shape[0]
+            cols = 1
+        else:
+            assert len(shape) == 2, "%d-rank tensors unsupported" % len(shape)
+            rows = shape[0]
+            cols = shape[1]
         if cols != 1:
             order = ", Eigen::RowMajor"
         else:
@@ -551,26 +553,33 @@ def get_kernel(expr):
 
 
 def assemble(expr):
-    rank = len(expr.arguments())
-    if rank != 2:
-        raise NotImplementedError("Only Matrix assembly implemented")
+    args = expr.arguments()
+    rank = len(args)
+    if rank not in (1, 2):
+        raise NotImplementedError("Not implemented for rank-%d", rank)
 
-    test, trial = expr.arguments()
-
-    if any(isinstance(t.function_space(), firedrake.MixedFunctionSpace) for t in (test, trial)):
+    if any(isinstance(t.function_space(), firedrake.MixedFunctionSpace) for t in args):
         raise NotImplementedError("Mixed space assembly not implemented")
-    maps = tuple((test.cell_node_map(), trial.cell_node_map()))
-    sparsity = firedrake.op2.Sparsity((test.function_space().dof_dset,
-                                       trial.function_space().dof_dset),
-                                      maps)
-    matrix = firedrake.op2.Mat(sparsity, np.float64)
 
+    if rank == 2:
+        test, trial = expr.arguments()
+        maps = tuple((test.cell_node_map(), trial.cell_node_map()))
+        sparsity = firedrake.op2.Sparsity((test.function_space().dof_dset,
+                                           trial.function_space().dof_dset),
+                                          maps)
+        tensor = firedrake.op2.Mat(sparsity, np.float64)
+        tensor_arg = tensor(firedrake.op2.INC, (test.cell_node_map()[firedrake.op2.i[0]],
+                                                trial.cell_node_map()[firedrake.op2.i[1]]),
+                            flatten=True)
+    else:
+        test = args[0]
+        tensor = firedrake.Function(test.function_space())
+        tensor_arg = tensor.dat(firedrake.op2.INC, test.cell_node_map()[firedrake.op2.i[0]],
+                                flatten=True)
     coords, coefficients, needs_cell_facets, kernel = get_kernel(expr)
 
     mesh = coords.function_space().mesh()
 
-    tensor_arg = matrix(firedrake.op2.INC, (test.cell_node_map()[firedrake.op2.i[0]],
-                                            trial.cell_node_map()[firedrake.op2.i[1]]))
     args = [kernel, mesh.cell_set, tensor_arg,
             coords.dat(firedrake.op2.READ, coords.cell_node_map(),
                        flatten=True)]
@@ -582,10 +591,10 @@ def assemble(expr):
         args.append(mesh.cell_facets(firedrake.op2.READ))
 
     firedrake.op2.par_loop(*args)
-    return matrix
+    return tensor
 
 
-mesh = firedrake.UnitSquareMesh(2, 1, quadrilateral=False)
+mesh = firedrake.UnitSquareMesh(1, 1, quadrilateral=False)
 degree = 1
 # RTe = firedrake.FiniteElement("RTCF", firedrake.quadrilateral, 1)
 RTe = firedrake.FiniteElement("RT", firedrake.triangle, degree)

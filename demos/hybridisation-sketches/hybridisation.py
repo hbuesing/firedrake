@@ -12,7 +12,12 @@ import ufl
 from ufl.algorithms.map_integrands import map_integrand_dags
 from ufl.algorithms.multifunction import MultiFunction
 
+firedrake.parameters["coffee"] = {}
+
+firedrake.parameters["pyop2_options"]["debug"] = True
+
 np.set_printoptions(linewidth=200, precision=4)
+
 
 class CheckRestrictions(MultiFunction):
     expr = MultiFunction.reuse_if_untouched
@@ -26,10 +31,6 @@ class RemoveRestrictions(MultiFunction):
 
     def positive_restricted(self, o):
         return self(o.ufl_operands[0])
-
-firedrake.parameters["coffee"] = {}
-
-firedrake.parameters["pyop2_options"]["debug"] = True
 
 
 class Tensor(object):
@@ -47,7 +48,7 @@ class Tensor(object):
             shp = []
             for fs in V:
                 shp.append(fs.fiat_element.space_dimension() * fs.cdim)
-            shapes[i] = shp
+            shapes[i] = tuple(shp)
             shape.append(sum(shp))
         self.shapes = shapes
         self.shape = tuple(shape)
@@ -552,7 +553,7 @@ def get_kernel(expr):
                              headers=["#include <eigen3/Eigen/Dense>"])
 
 
-def assemble(expr):
+def assemble(expr, bcs=None):
     args = expr.arguments()
     rank = len(args)
     if rank not in (1, 2):
@@ -591,6 +592,9 @@ def assemble(expr):
         args.append(mesh.cell_facets(firedrake.op2.READ))
 
     firedrake.op2.par_loop(*args)
+    if bcs is not None and rank == 2:
+        for bc in bcs:
+            tensor.set_local_diagonal_entries(bc.nodes)
     return tensor
 
 
@@ -612,60 +616,84 @@ tau,v  = firedrake.TestFunctions(W)
 lambdar = firedrake.TrialFunction(TraceRT)
 gammar = firedrake.TestFunction(TraceRT)
 
+bc = firedrake.DirichletBC(TraceRT, firedrake.Constant(0), (1, 2, 3, 4))
 n = firedrake.FacetNormal(mesh)
 
-mass = firedrake.dot(sigma, tau)*firedrake.dx
+mass = firedrake.dot(sigma, tau)*firedrake.dx + u*v*firedrake.dx
 
 div = firedrake.div(sigma)*v*firedrake.dx
 grad = firedrake.div(tau)*u*firedrake.dx
 
 trace = firedrake.jump(tau, n=n)*lambdar('+')*firedrake.dS
-trace_ext = firedrake.dot(tau, n)*lambdar*firedrake.ds
 
-# trace_ext = firedrake.dot(tau, firedrake.Constant((1, 1)))*lambdar*firedrake.dx
 positive_trace = firedrake.dot(tau, n)('+')*lambdar('+')*firedrake.dS
 
-cell_hdiv = mass + div + grad
+cell_hdiv = mass + div - grad
 Cell_hdiv = firedrake.assemble(cell_hdiv, nest=False).M.values
 positive_trace = firedrake.dot(tau, n)('+')*lambdar('+')*firedrake.dS
-Trace = Matrix(positive_trace)
+K = Matrix(positive_trace)
 
-X = Trace.T * Matrix(cell_hdiv).inv * Trace
-assemble(X)
+A = Matrix(cell_hdiv)
+schur = -K.T * A.inv * K
+cellwise = assemble(schur, bcs=[bc]).values
 trace = firedrake.assemble(trace, nest=False).M.values
-glob = np.dot(trace.T, np.dot(np.linalg.inv(Cell_hdiv), trace))
-cellwise = assemble(X).values
 
-# print glob
-# print cellwise
-# print np.allclose(glob, cellwise)
+schur = np.dot(trace.T, np.dot(np.linalg.inv(Cell_hdiv), trace))
+
+schur[bc.nodes, :] = 0
+schur[:, bc.nodes] = 0
+
+d = np.zeros_like(schur)
+d[bc.nodes, bc.nodes] = 1
+glob = d  - schur
+print glob
+print cellwise
+print np.allclose(glob, cellwise)
 
 # print assemble(X).values
 # from IPython import embed; embed()
 
 # VFSes
 
-V = firedrake.VectorFunctionSpace(mesh, "DG", 1)
-Q = firedrake.FunctionSpace(mesh, "DG", 2)
-R = firedrake.FunctionSpace(mesh, "CG", 1)
+# mesh = firedrake.UnitSquareMesh(1, 1, quadrilateral=False)
+# V = firedrake.VectorFunctionSpace(mesh, "DG", 0)
+# Q = firedrake.FunctionSpace(mesh, "DG", 2)
+# R = firedrake.FunctionSpace(mesh, "CG", 1)
 
-W = V*Q
+# W = V
+# n = firedrake.FacetNormal(mesh)
 
-u = firedrake.TrialFunction(W)
-v = firedrake.TestFunction(W)
+# u = firedrake.TrialFunction(W)
+# v = firedrake.TestFunction(W)
 
-a = firedrake.inner(u, v)*firedrake.dx
-b = firedrake.dot(v, firedrake.Constant((1, 1, 1)))*firedrake.TrialFunction(R)*firedrake.dx
-A = firedrake.assemble(a, nest=False).M.values
-B = firedrake.assemble(b, nest=False).M.values
+# a = firedrake.inner(u, v)*firedrake.dx
+# b = firedrake.jump(v, n=n)*firedrake.TrialFunction(R)('+')*firedrake.dS
+# pos_b = firedrake.dot(v('+'), n('+'))*firedrake.TrialFunction(R)('+')*firedrake.dS
+# # b = firedrake.dot(v, firedrake.Constant((1, 1)))*firedrake.TrialFunction(R)*firedrake.ds
+# # A = firedrake.assemble(a, nest=False).M.values
+# B = firedrake.assemble(b, nest=False).M.values
 
-print A.shape, B.shape
+# # print A.shape, B.shape
 
-print np.dot(B.T, np.dot(np.linalg.inv(A), B))
+# # print np.dot(B.T, np.dot(np.linalg.inv(A), B))
 
-b = Matrix(b)
+# print B
 
-print assemble(b.T * Matrix(a).inv * b).values
+# b = Matrix(pos_b)
+
+# print assemble(b).values
+# print assemble(b.T * Matrix(a).inv * b).values
+
+f = firedrake.Function(DG)
+f.interpolate(firedrake.Expression("(1+8*pi*pi)*sin(x[0]*pi*2)*sin(x[1]*pi*2)"))
+
+L = f*v*firedrake.dx
+
+F = Vector(L)
+
+# get_kernel(F)
+rhs = K.T * Matrix(cell_hdiv).inv * F
+
 # B = assemble(Matrix(a)).values
 
 #print A

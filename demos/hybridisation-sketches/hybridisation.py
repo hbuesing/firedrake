@@ -21,6 +21,12 @@ class CheckRestrictions(MultiFunction):
         raise ValueError("Cell-wise integrals may only contain positive restrictions")
 
 
+class RemoveRestrictions(MultiFunction):
+    expr = MultiFunction.reuse_if_untouched
+
+    def positive_restricted(self, o):
+        return self(o.ufl_operands[0])
+
 firedrake.parameters["coffee"] = {}
 
 firedrake.parameters["pyop2_options"]["debug"] = True
@@ -380,9 +386,21 @@ def get_kernel(expr):
 
             syms[expr] = sym
             statements.append(ast.Decl(typ, sym))
-            kernels[expr] = firedrake.ffc_interface.compile_form(expr.form,
-                                                                 "subkernel%d" % \
-                                                                 len(kernels))
+            summed = firedrake.ffc_interface.sum_integrands(expr.form)
+            kernels[expr] = []
+            mapper = RemoveRestrictions()
+            for i, it in enumerate(summed.integrals()):
+                typ = it.integral_type()
+                form = ufl.Form([it])
+                prefix = "subkernel%d_%d_%s_" % (len(kernels), i, typ)
+                if typ == "interior_facet":
+                    newit = map_integrand_dags(mapper, it)
+                    newit = newit.reconstruct(integral_type="exterior_facet")
+                    form = ufl.Form([newit])
+
+                ks = firedrake.ffc_interface.compile_form(form, prefix)
+                kernels[expr].append((typ, ks))
+
             return
         if isinstance(expr, (UOp, BinOp, Transpose, Inverse)):
             map(get_decls, expr.operands)
@@ -401,137 +419,68 @@ def get_kernel(expr):
     inc = []
     for exp, sym in syms.items():
         statements.append(ast.FlatBlock("%s.setZero();\n" % sym))
-        for ks in kernels[exp]:
-            coeffs = []
-            kernel = ks[-1]
-            if ks[1] not in ["cell", "interior_facet", "exterior_facet"]:
-                raise NotImplementedError("Integral type '%s' not supported" % ks[1])
-            if ks[1] in ["interior_facet", "exterior_facet"]:
-                needs_cell_facets = True
-            if coords is not None:
-                assert ks[3] == coords
-            else:
-                coords = ks[3]
-            for coeff in ks[4]:
-                coeffs.append(coeffmap[coeff])
-            inc.extend(kernel._include_dirs)
-            row, col = ks[0]
-            rshape = exp.shapes[0][row]
-            cshape = exp.shapes[1][col]
-            rstart = sum(exp.shapes[0][:row])
-            cstart = sum(exp.shapes[1][:col])
-            # Sub-block of mixed
-            if (rshape, cshape) != exp.shape:
-                tensor = ast.FlatBlock("%s.block<%d,%d>(%d, %d)" %
-                                       (sym, rshape, cshape,
-                                        rstart, cstart))
-            else:
-                tensor = sym
-            if ks[1] in ["exterior_facet", "interior_facet"]:
-                itsym = ast.Symbol("i0")
-                block = []
-                mesh = coords.function_space().mesh()
-                nfacet = mesh._plex.getConeSize(mesh._plex.getHeightStratum(0)[0])
-                if ks[1] == "exterior_facet":
-                    coeffs.append(ast.FlatBlock("&%s" % itsym))
-                    tmpcoords = coordsym
-                    tmptensor = tensor
-                    check = 0
+        for (typ, klist) in kernels[exp]:
+            for ks in klist:
+                coeffs = []
+                kernel = ks[-1]
+                if typ not in ["cell", "interior_facet", "exterior_facet"]:
+                    raise NotImplementedError("Integral type '%s' not supported" % ks[1])
+                if typ in ["interior_facet", "exterior_facet"]:
+                    needs_cell_facets = True
+                if coords is not None:
+                    assert ks[3] == coords
                 else:
-                    tmpsym = ast.Symbol("tmp_%s" % sym)
-                    statements.append(ast.Decl(matrix_type(exp.shape, int_facet=True), tmpsym))
-                    statements.append(ast.FlatBlock("%s.setZero();\n" % tmpsym))
-                    facetsym = ast.Symbol("facet")
-                    block.append(ast.Decl("unsigned int", ast.Symbol(facetsym, (2, ))))
-                    block.append(ast.Assign(ast.Symbol(facetsym, (0, )), itsym))
-                    block.append(ast.Assign(ast.Symbol(facetsym, (1, )), itsym))
-                    def populate_buf(tmp, orig, origsym):
-                        arity = orig.cell_node_map().arity
-                        cdim = orig.dat.cdim
-                        statements.append(ast.Decl("double *", ast.Symbol(tmp, (arity*cdim*2, ))))
-                        i = ast.Symbol("i")
-                        j = ast.Symbol("j")
-                        inner = ast.For(ast.Decl("int", i, init=0),
-                                        ast.Less(i, arity),
-                                        ast.Incr(i, 1),
-                                        [ast.Assign(ast.Symbol(tmp, (ast.Sum(i,
-                                                                             ast.Prod(j, arity*cdim)), )),
-                                                    ast.Symbol(origsym, (ast.Sum(i, ast.Prod(j, 3)), ))),
-                                         ast.Assign(ast.Symbol(tmp, (ast.Sum(arity,
-                                                                             ast.Sum(i,
-                                                                                     ast.Prod(j, arity*cdim))), )),
-                                                    ast.Symbol(origsym, (ast.Sum(i, ast.Prod(j, 3)), )))])
-                        loop = ast.For(ast.Decl("int", j, init=0),
-                                       ast.Less(j, cdim),
-                                       ast.Incr(j, 1),
-                                       [inner])
-                        statements.append(loop)
-                    tmpcoords = ast.Symbol("tmp_%s" % coordsym)
-                    populate_buf(tmpcoords, coords, coordsym)
-                    tmpcoeffs = []
-                    for c in ks[4]:
-                        tmp = ast.Symbol("tmp_%s" % coeffmap[c])
-                        tmpcoeffs.append(tmp)
-                        populate_buf(tmp, c, coeffmap[c])
-                    coeffs = tmpcoeffs
-                    coeffs.append(facetsym)
-
-                    if (rshape, cshape) != exp.shape:
-                        tmptensor = ast.FlatBlock("%s.block<%d,%d>(%d, %d)" %
-                                               (tmpsym, 2*rshape, 2*cshape,
-                                                2*rstart, 2*cstart))
+                    coords = ks[3]
+                for coeff in ks[4]:
+                    coeffs.append(coeffmap[coeff])
+                inc.extend(kernel._include_dirs)
+                row, col = ks[0]
+                rshape = exp.shapes[0][row]
+                rstart = sum(exp.shapes[0][:row])
+                try:
+                    cshape = exp.shapes[1][col]
+                    cstart = sum(exp.shapes[1][:col])
+                except:
+                    cshape = 1
+                    cstart = 0
+                # Sub-block of mixed
+                if (rshape, cshape) != exp.shape:
+                    tensor = ast.FlatBlock("%s.block<%d,%d>(%d, %d)" %
+                                           (sym, rshape, cshape,
+                                            rstart, cstart))
+                else:
+                    tensor = sym
+                if typ in ["exterior_facet", "interior_facet"]:
+                    itsym = ast.Symbol("i0")
+                    block = []
+                    mesh = coords.function_space().mesh()
+                    nfacet = mesh._plex.getConeSize(mesh._plex.getHeightStratum(0)[0])
+                    coeffs.append(ast.FlatBlock("&%s" % itsym))
+                    if typ == "exterior_facet":
+                        check = 0
                     else:
-                        tmptensor = tmpsym
-
-                    check = 1
-                block.append(
-                    ast.If(ast.Eq(ast.Symbol(cellfacetsym, rank=(itsym, )),
-                                  check),
-                           [ast.Block([ast.FunCall(kernel.name,
-                                                   tmptensor, tmpcoords, *coeffs)],
-                                      open_scope=True)])
-                    )
-                loop = ast.For(ast.Decl("unsigned int", itsym, init=0),
-                               ast.Less(itsym, nfacet),
-                               ast.Incr(itsym, 1),
-                               block)
-                statements.append(loop)
-                if ks[1] == "interior_facet":
-                    # Increment back in VFS case needs to pull apart the blocks:
-                    # Consider a 2D VFS.  The tensor we passed in is:
-                    #
-                    # XX XY
-                    # YX YY
-                    #
-                    # Where each block is further divided into
-                    #
-                    # ++ -+
-                    # +- --
-                    #
-                    # We need to pull the ++ blocks out of each
-                    # subblock and splat them into the tensor we
-                    # actually want as:
-                    #
-                    # XX(++) XY(++)
-                    # YX(++) YY(++)
-                    #
-                    # To do this we spin over the vector dimenson for
-                    # the test and trial spaces and push into the
-                    # appropriate part
-                    tmptensor = ast.FlatBlock("%s.block<%d,%d>(%d, %d)" %
-                                              (tmpsym, rshape, cshape,
-                                               rstart, cstart))
-                    statements.append(ast.Incr(tensor, tmptensor))
-            else:
-                statements.append(ast.FunCall(kernel.name,
-                                              tensor,
-                                              coordsym,
-                                              *coeffs))
+                        check = 1
+                    block.append(
+                        ast.If(ast.Eq(ast.Symbol(cellfacetsym, rank=(itsym, )),
+                                      check),
+                               [ast.Block([ast.FunCall(kernel.name,
+                                                       tensor, coordsym, *coeffs)],
+                                          open_scope=True)])
+                        )
+                    loop = ast.For(ast.Decl("unsigned int", itsym, init=0),
+                                   ast.Less(itsym, nfacet),
+                                   ast.Incr(itsym, 1),
+                                   block)
+                    statements.append(loop)
+                else:
+                    statements.append(ast.FunCall(kernel.name,
+                                                  tensor,
+                                                  coordsym,
+                                                  *coeffs))
 
     rettype = map_type(matrix_type(expr.shape))
     retsym = ast.Symbol("sym%d" % len(syms))
     retdatasym = ast.Symbol("datasym%d" % len(syms))
-    syms[expr] = retsym
     result = ast.Decl(dtype, ast.Symbol(retdatasym, expr.shape))
 
     statements.append(ast.FlatBlock("%s %s((%s *)%s);\n" %
@@ -589,9 +538,10 @@ def get_kernel(expr):
     klist = []
     transformer = TransformKernelTensor()
     for v in kernels.values():
-        for k in v:
-            kast = transformer.visit(k[-1]._ast)
-            klist.append(ast.FlatBlock(kast.gencode()))
+        for (_, ks) in v:
+            for k in ks:
+                kast = transformer.visit(k[-1]._ast)
+                klist.append(ast.FlatBlock(kast.gencode()))
 
     klist.append(kernel)
     kernelast = ast.Node(klist)

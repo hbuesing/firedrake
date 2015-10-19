@@ -13,7 +13,7 @@ import firedrake.utils as utils
 from firedrake.petsc import PETSc
 
 
-__all__ = ['Mesh']
+__all__ = ['Mesh', 'ExtrudedMesh']
 
 
 class _Facets(object):
@@ -55,13 +55,12 @@ class _Facets(object):
     def set(self):
         size = self.classes
         halo = None
-        # TODO:
-        # if isinstance(self.mesh, ExtrudedMesh):
-        #     if self.kind == "interior":
-        #         base = self.mesh._old_mesh.interior_facets.set
-        #     else:
-        #         base = self.mesh._old_mesh.exterior_facets.set
-        #     return op2.ExtrudedSet(base, layers=self.mesh.layers)
+        if isinstance(self.mesh, ExtrudedMesh):
+            if self.kind == "interior":
+                base = self.mesh._base_mesh.interior_facets.set
+            else:
+                base = self.mesh._base_mesh.exterior_facets.set
+            return op2.ExtrudedSet(base, layers=self.mesh.layers)
         return op2.Set(size, "%s_%s_facets" % (self.mesh.name, self.kind), halo=halo)
 
     @property
@@ -191,6 +190,10 @@ class Mesh(object):
         if hasattr(self, '_callback'):
             self._callback(self)
 
+    @property
+    def layers(self):
+        return None
+
     def ufl_cell(self):
         """The UFL :class:`~ufl.cell.Cell` associated with the mesh."""
         return self._ufl_cell
@@ -311,12 +314,6 @@ class Mesh(object):
                                      self.cell_closure,
                                      fiat_element)
 
-    # @property
-    # def layers(self):
-    #     """Return the number of layers of the extruded mesh
-    #     represented by the number of occurences of the base mesh."""
-    #     return self._layers
-
     # TODO: cell_orientations
 
     # def num_cells(self):
@@ -347,7 +344,7 @@ class Mesh(object):
     #     return self.num_entities(d)
 
     def cell_dimension(self):
-        """Return the cell dimension"""
+        """Returns the cell dimension."""
         return self.ufl_cell().topological_dimension()
 
     def facet_dimension(self):
@@ -363,3 +360,90 @@ class Mesh(object):
     def cell_set(self):
         size = list(self.cell_classes)
         return op2.Set(size, "%s_cells" % self.name)
+
+
+class ExtrudedMesh(Mesh):
+    """Build an extruded mesh from an input mesh
+
+    :arg mesh:           the unstructured base mesh
+    :arg layers:         number of extruded cell layers in the "vertical"
+                         direction.
+    """
+
+    def __init__(self, mesh, layers):
+        mesh.init()
+
+        self._base_mesh = mesh
+        if layers < 1:
+            raise RuntimeError("Must have at least one layer of extruded cells (not %d)" % layers)
+        # All internal logic works with layers of base mesh (not layers of cells)
+        self._layers = layers + 1
+        self._ufl_cell = ufl.OuterProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1))
+
+        self._entity_classes = mesh._entity_classes
+        # TODO:
+        # self.name = mesh.name
+        # self._plex = mesh._plex
+        # self._plex_renumbering = mesh._plex_renumbering
+        # self._cell_numbering = mesh._cell_numbering
+
+    @property
+    def cell_closure(self):
+        """2D array of ordered cell closures
+
+        Each row contains ordered cell entities for a cell, one row per cell.
+        """
+        return self._base_mesh.cell_closure
+
+    @utils.cached_property
+    def exterior_facets(self):
+        exterior_facets = self._base_mesh.exterior_facets
+        return _Facets(self, exterior_facets.classes,
+                       "exterior",
+                       exterior_facets.facet_cell,
+                       exterior_facets.local_facet_number,
+                       exterior_facets.markers,
+                       unique_markers=exterior_facets.unique_markers)
+
+    @utils.cached_property
+    def interior_facets(self):
+        interior_facets = self._base_mesh.interior_facets
+        return _Facets(self, interior_facets.classes,
+                       "interior",
+                       interior_facets.facet_cell,
+                       interior_facets.local_facet_number)
+
+    def make_cell_node_list(self, global_numbering, fiat_element):
+        """Builds the DoF mapping.
+
+        :arg global_numbering: Section describing the global DoF numbering
+        :arg fiat_element: The FIAT element for the cell
+        """
+        return dmplex.get_cell_nodes(global_numbering,
+                                     self.cell_closure,
+                                     fiat_utils.FlattenedElement(fiat_element))
+
+    @property
+    def layers(self):
+        """Return the number of layers of the extruded mesh
+        represented by the number of occurences of the base mesh."""
+        return self._layers
+
+    def cell_dimension(self):
+        """Returns the cell dimension."""
+        return (self._base_mesh.cell_dimension(), 1)
+
+    def facet_dimension(self):
+        """Returns the facet dimension.
+
+        .. note::
+
+            This only returns the dimension of the "side" (vertical) facets,
+            not the "top" or "bottom" (horizontal) facets.
+
+        """
+        return (self._base_mesh.facet_dimension(), 1)
+
+    @utils.cached_property
+    def cell_set(self):
+        return op2.ExtrudedSet(self._base_mesh.cell_set, layers=self.layers)

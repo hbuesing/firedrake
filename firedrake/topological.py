@@ -158,6 +158,21 @@ class Mesh(object):
 
         self._ufl_cell = ufl.Cell(fiat_utils._cells[dim][cell_nfacets])
 
+        # Mark exterior and interior facets
+        # Note.  This must come before distribution, because otherwise
+        # DMPlex will consider facets on the domain boundary to be
+        # exterior, which is wrong.
+        with timed_region("Mesh: label facets"):
+            label_boundary = (op2.MPI.comm.size == 1) or distribute
+            dmplex.label_facets(plex, label_boundary=label_boundary)
+
+        # Distribute the dm to all ranks
+        if op2.MPI.comm.size > 1 and distribute:
+            # We distribute with overlap zero, in case we're going to
+            # refine this mesh in parallel.  Later, when we actually use
+            # it, we grow the halo.
+            plex.distribute(overlap=0)
+
         def callback(self):
             del self._callback
             if op2.MPI.comm.size > 1:
@@ -346,9 +361,9 @@ class Mesh(object):
     #     eStart, eEnd = self._plex.getDepthStratum(1)
     #     return eEnd - eStart
 
-    # def num_vertices(self):
-    #     vStart, vEnd = self._plex.getDepthStratum(0)
-    #     return vEnd - vStart
+    def num_vertices(self):
+        vStart, vEnd = self._plex.getDepthStratum(0)
+        return vEnd - vStart
 
     # def num_entities(self, d):
     #     eStart, eEnd = self._plex.getDepthStratum(d)

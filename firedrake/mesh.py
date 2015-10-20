@@ -298,6 +298,9 @@ class Mesh(object):
         if hasattr(self, '_callback'):
             self._callback(self)
 
+    def ufl_domain(self):
+        return ufl.Domain(self._coordinate_function)
+
     # @utils.cached_property
     # def exterior_facets(self):
     #     if self._plex.getStratumSize("exterior_facets", 1) > 0:

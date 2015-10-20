@@ -418,11 +418,18 @@ class Mesh(object):
     #                                  self.cell_closure,
     #                                  fiat_element)
 
-    # @property
-    # def coordinates(self):
-    #     """The :class:`.Function` containing the coordinates of this mesh."""
-    #     self.init()
-    #     return self._coordinate_function
+    @utils.cached_property
+    def coordinates(self):
+        """The :class:`.Function` containing the coordinates of this mesh."""
+        import firedrake.functionspace as functionspace
+        import firedrake.function as function
+        self.init()
+
+        coordinate_fs = self._coordinate_function.function_space()
+        # TODO: why VectorFunctionSpace?
+        V = functionspace.VectorFunctionSpace(self, coordinate_fs)
+        f = function.Function(V, val=self._coordinate_function)
+        return f
 
     # @coordinates.setter
     # def coordinates(self, value):

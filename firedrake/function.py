@@ -10,6 +10,7 @@ from pyop2.logger import warning
 
 from firedrake import expression as expression_t
 from firedrake import functionspace
+from firedrake import topological
 from firedrake import utils
 from firedrake import vector
 try:
@@ -74,28 +75,34 @@ class Function(ufl.Coefficient):
             raise NotImplementedError("Can't make a Function defined on a "
                                       + str(type(function_space)))
 
+        if isinstance(val, topological.Function):
+            self.topological = val
+        else:
+            raise NotImplementedError("Go away!")
+
+        # TODO!
         ufl.Coefficient.__init__(self, self._function_space.ufl_element())
 
-        self._label = "a function"
-        self.uid = utils._new_uid()
-        self._name = name or 'function_%d' % self.uid
+        # self._label = "a function"
+        # self.uid = utils._new_uid()
+        # self._name = name or 'function_%d' % self.uid
 
-        if isinstance(val, (op2.Dat, op2.DatView)):
-            self.dat = val
-        else:
-            self.dat = self._function_space.make_dat(val, dtype,
-                                                     self._name, uid=self.uid)
+        # if isinstance(val, (op2.Dat, op2.DatView)):
+        #     self.dat = val
+        # else:
+        #     self.dat = self._function_space.make_dat(val, dtype,
+        #                                              self._name, uid=self.uid)
 
-        self._repr = None
-        self._split = None
+        # self._repr = None
+        # self._split = None
 
-        if cachetools:
-            # LRU cache for expressions assembled onto this function
-            self._expression_cache = cachetools.LRUCache(maxsize=50)
-        else:
-            self._expression_cache = None
-        if isinstance(function_space, Function):
-            self.assign(function_space)
+        # if cachetools:
+        #     # LRU cache for expressions assembled onto this function
+        #     self._expression_cache = cachetools.LRUCache(maxsize=50)
+        # else:
+        #     self._expression_cache = None
+        # if isinstance(function_space, Function):
+        #     self.assign(function_space)
 
     def split(self):
         """Extract any sub :class:`Function`\s defined on the component spaces

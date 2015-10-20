@@ -345,32 +345,32 @@ class Mesh(object):
 
     # TODO: cell_orientations
 
-    # def num_cells(self):
-    #     cStart, cEnd = self._plex.getHeightStratum(0)
-    #     return cEnd - cStart
+    def num_cells(self):
+        cStart, cEnd = self._plex.getHeightStratum(0)
+        return cEnd - cStart
 
-    # def num_facets(self):
-    #     fStart, fEnd = self._plex.getHeightStratum(1)
-    #     return fEnd - fStart
+    def num_facets(self):
+        fStart, fEnd = self._plex.getHeightStratum(1)
+        return fEnd - fStart
 
-    # def num_faces(self):
-    #     fStart, fEnd = self._plex.getDepthStratum(2)
-    #     return fEnd - fStart
+    def num_faces(self):
+        fStart, fEnd = self._plex.getDepthStratum(2)
+        return fEnd - fStart
 
-    # def num_edges(self):
-    #     eStart, eEnd = self._plex.getDepthStratum(1)
-    #     return eEnd - eStart
+    def num_edges(self):
+        eStart, eEnd = self._plex.getDepthStratum(1)
+        return eEnd - eStart
 
     def num_vertices(self):
         vStart, vEnd = self._plex.getDepthStratum(0)
         return vEnd - vStart
 
-    # def num_entities(self, d):
-    #     eStart, eEnd = self._plex.getDepthStratum(d)
-    #     return eEnd - eStart
+    def num_entities(self, d):
+        eStart, eEnd = self._plex.getDepthStratum(d)
+        return eEnd - eStart
 
-    # def size(self, d):
-    #     return self.num_entities(d)
+    def size(self, d):
+        return self.num_entities(d)
 
     def cell_dimension(self):
         """Returns the cell dimension."""

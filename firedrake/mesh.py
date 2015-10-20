@@ -239,15 +239,15 @@ class Mesh(object):
         self.uid = utils._new_uid()
 
         # Create mesh topology
-        topology = topological.Mesh(plex, name=name, reorder=reorder, distribute=distribute)
+        self._topology = topological.Mesh(plex, name=name, reorder=reorder, distribute=distribute)
 
         if geometric_dim is None:
-            geometric_dim = topology.ufl_cell().topological_dimension()
+            geometric_dim = self._topology.ufl_cell().topological_dimension()
 
         def callback(self):
             del self._callback
             # Finish the initialisation of mesh topology
-            topology.init()
+            self._topology.init()
 
             # Note that for bendy elements, this needs to change.
             with timed_region("Mesh: coordinate field"):
@@ -261,32 +261,32 @@ class Mesh(object):
                     #                                      val=periodic_coords,
                     #                                      name="Coordinates")
                 else:
-                    coordinate_elem = ufl.VectorElement("Lagrange", topology.ufl_cell(), 1, dim=geometric_dim)
-                    coordinate_fs = topological.VectorFunctionSpace(topology, coordinate_elem, geometric_dim)
+                    coordinate_elem = ufl.VectorElement("Lagrange", self._topology.ufl_cell(), 1, dim=geometric_dim)
+                    coordinate_fs = topological.VectorFunctionSpace(self._topology, coordinate_elem, geometric_dim)
 
                     coordinates = dmplex.reordered_coords(plex, coordinate_fs._global_numbering,
-                                                          (topology.num_vertices(), geometric_dim))
+                                                          (self._topology.num_vertices(), geometric_dim))
 
                     self._coordinate_function = topological.Function(coordinate_fs,
                                                                      val=coordinates,
                                                                      name="Coordinates")
 
-            # TODO: ufl_cell, ufl_domain, coordinates
-            # self._ufl_domain = ufl.Domain(self.coordinates)
+            # Set UFL domain
+            self._ufl_domain = ufl.Domain(self._coordinate_function)
 
-            # # Add subdomain_data to the measure objects we store with
-            # # the mesh.  These are weakrefs for consistency with the
-            # # "global" measure objects
-            # self._dx = ufl.Measure('cell', subdomain_data=weakref.ref(self.coordinates))
-            # self._ds = ufl.Measure('exterior_facet', subdomain_data=weakref.ref(self.coordinates))
-            # self._dS = ufl.Measure('interior_facet', subdomain_data=weakref.ref(self.coordinates))
-            # # Set the subdomain_data on all the default measures to this
-            # # coordinate field.
-            # # We don't set the domain on the measure since this causes
-            # # an uncollectable reference in the global space (dx is
-            # # global).  Furthermore, it's never used anyway.
-            # for measure in [ufl.dx, ufl.ds, ufl.dS]:
-            #     measure._subdomain_data = weakref.ref(self.coordinates)
+            # Add subdomain_data to the measure objects we store with
+            # the mesh.  These are weakrefs for consistency with the
+            # "global" measure objects
+            self._dx = ufl.Measure('cell', subdomain_data=weakref.ref(self._coordinate_function))
+            self._ds = ufl.Measure('exterior_facet', subdomain_data=weakref.ref(self._coordinate_function))
+            self._dS = ufl.Measure('interior_facet', subdomain_data=weakref.ref(self._coordinate_function))
+            # Set the subdomain_data on all the default measures to this
+            # coordinate field.
+            # We don't set the domain on the measure since this causes
+            # an uncollectable reference in the global space (dx is
+            # global).  Furthermore, it's never used anyway.
+            for measure in [ufl.dx, ufl.ds, ufl.dS]:
+                measure._subdomain_data = weakref.ref(self._coordinate_function)
 
         self._callback = callback
 
@@ -298,125 +298,20 @@ class Mesh(object):
         if hasattr(self, '_callback'):
             self._callback(self)
 
+    @property
+    def topological(self):
+        return self._topology
+
+    # def ufl_id(self):
+    #     return id(self)
+
     def ufl_domain(self):
-        return ufl.Domain(self._coordinate_function)
+        self.init()
+        return self._ufl_domain
 
-    # @utils.cached_property
-    # def exterior_facets(self):
-    #     if self._plex.getStratumSize("exterior_facets", 1) > 0:
-    #         # Compute the facet_numbering
-
-    #         # Order exterior facets by OP2 entity class
-    #         exterior_facets, exterior_facet_classes = \
-    #             dmplex.get_facets_by_class(self._plex, "exterior_facets")
-
-    #         # Derive attached boundary IDs
-    #         if self._plex.hasLabel("boundary_ids"):
-    #             boundary_ids = np.zeros(exterior_facets.size, dtype=np.int32)
-    #             for i, facet in enumerate(exterior_facets):
-    #                 boundary_ids[i] = self._plex.getLabelValue("boundary_ids", facet)
-
-    #             unique_ids = np.sort(self._plex.getLabelIdIS("boundary_ids").indices)
-    #         else:
-    #             boundary_ids = None
-    #             unique_ids = None
-
-    #         exterior_local_facet_number, exterior_facet_cell = \
-    #             dmplex.facet_numbering(self._plex, "exterior",
-    #                                    exterior_facets,
-    #                                    self._cell_numbering,
-    #                                    self.cell_closure)
-
-    #         return _Facets(self, exterior_facet_classes, "exterior",
-    #                        exterior_facet_cell, exterior_local_facet_number,
-    #                        boundary_ids, unique_markers=unique_ids)
-    #     else:
-    #         if self._plex.hasLabel("boundary_ids"):
-    #             unique_ids = np.sort(self._plex.getLabelIdIS("boundary_ids").indices)
-    #         else:
-    #             unique_ids = None
-    #         return _Facets(self, 0, "exterior", None, None,
-    #                        unique_markers=unique_ids)
-
-    # @utils.cached_property
-    # def interior_facets(self):
-    #     if self._plex.getStratumSize("interior_facets", 1) > 0:
-    #         # Compute the facet_numbering
-
-    #         # Order interior facets by OP2 entity class
-    #         interior_facets, interior_facet_classes = \
-    #             dmplex.get_facets_by_class(self._plex, "interior_facets")
-
-    #         interior_local_facet_number, interior_facet_cell = \
-    #             dmplex.facet_numbering(self._plex, "interior",
-    #                                    interior_facets,
-    #                                    self._cell_numbering,
-    #                                    self.cell_closure)
-
-    #         return _Facets(self, interior_facet_classes, "interior",
-    #                        interior_facet_cell, interior_local_facet_number)
-    #     else:
-    #         return _Facets(self, 0, "interior", None, None)
-
-    # @utils.cached_property
-    # def cell_closure(self):
-    #     """2D array of ordered cell closures
-
-    #     Each row contains ordered cell entities for a cell, one row per cell.
-    #     """
-    #     plex = self._plex
-    #     topological_dim = plex.getDimension()
-
-    #     # Cell numbering and global vertex numbering
-    #     cell_numbering = self._cell_numbering
-    #     vertex_numbering = self._vertex_numbering.createGlobalSection(plex.getPointSF())
-
-    #     cStart, cEnd = plex.getHeightStratum(0)  # cells
-    #     cell_facets = plex.getConeSize(cStart)
-
-    #     if topological_dim + 1 == cell_facets:
-    #         # Simplex mesh
-    #         a_closure = plex.getTransitiveClosure(cStart)[0]
-
-    #         entity_per_cell = np.zeros(topological_dim + 1, dtype=np.int32)
-    #         for dim in xrange(topological_dim + 1):
-    #             start, end = plex.getDepthStratum(dim)
-    #             entity_per_cell[dim] = sum(map(lambda idx: start <= idx < end,
-    #                                            a_closure))
-
-    #         return dmplex.closure_ordering(plex, vertex_numbering,
-    #                                        cell_numbering, entity_per_cell)
-
-    #     elif topological_dim == 2 and cell_facets == 4:
-    #         # Quadrilateral mesh
-    #         cell_ranks = dmplex.get_cell_remote_ranks(plex)
-
-    #         facet_orientations = dmplex.quadrilateral_facet_orientations(
-    #             plex, vertex_numbering, cell_ranks)
-
-    #         cell_orientations = dmplex.orientations_facet2cell(
-    #             plex, vertex_numbering, cell_ranks,
-    #             facet_orientations, cell_numbering)
-
-    #         dmplex.exchange_cell_orientations(plex,
-    #                                           cell_numbering,
-    #                                           cell_orientations)
-
-    #         return dmplex.quadrilateral_closure_ordering(
-    #             plex, vertex_numbering, cell_numbering, cell_orientations)
-
-    #     else:
-    #         raise RuntimeError("Unsupported mesh: neither simplex, nor quadrilateral.")
-
-    # def create_cell_node_list(self, global_numbering, fiat_element):
-    #     """Builds the DoF mapping.
-
-    #     :arg global_numbering: Section describing the global DoF numbering
-    #     :arg fiat_element: The FIAT element for the cell
-    #     """
-    #     return dmplex.get_cell_nodes(global_numbering,
-    #                                  self.cell_closure,
-    #                                  fiat_element)
+    def ufl_cell(self):
+        """The UFL :class:`~ufl.cell.Cell` associated with the mesh."""
+        return self.ufl_domain().cell()
 
     @utils.cached_property
     def coordinates(self):
@@ -430,28 +325,6 @@ class Mesh(object):
         V = functionspace.VectorFunctionSpace(self, coordinate_fs)
         f = function.Function(V, val=self._coordinate_function)
         return f
-
-    # @coordinates.setter
-    # def coordinates(self, value):
-    #     self._coordinate_function = value
-
-    #     # If the new coordinate field has a different dimension from
-    #     # the geometric dimension of the existing cell, replace the
-    #     # cell with one with the correct dimension.
-    #     ufl_cell = self.ufl_cell()
-    #     if value.element().value_shape()[0] != ufl_cell.geometric_dimension():
-    #         if isinstance(ufl_cell, ufl.OuterProductCell):
-    #             self._ufl_cell = ufl.OuterProductCell(ufl_cell._A, ufl_cell._B, value.element().value_shape()[0])
-    #         else:
-    #             self._ufl_cell = ufl.Cell(ufl_cell.cellname(),
-    #                                       geometric_dimension=value.element().value_shape()[0])
-    #         self._ufl_domain = ufl.Domain(self.ufl_cell(), data=self)
-
-    # @property
-    # def layers(self):
-    #     """Return the number of layers of the extruded mesh
-    #     represented by the number of occurences of the base mesh."""
-    #     return self._layers
 
     # def cell_orientations(self):
     #     """Return the orientation of each cell in the mesh.
@@ -534,61 +407,8 @@ class Mesh(object):
     #                  self.coordinates.dat(op2.READ, self.coordinates.cell_node_map()))
     #     self._cell_orientations = cell_orientations
 
-    # def ufl_id(self):
-    #     return id(self)
-
-    # def ufl_domain(self):
-    #     return self._ufl_domain
-
-    # def ufl_cell(self):
-    #     """The UFL :class:`~ufl.cell.Cell` associated with the mesh."""
-    #     return self._ufl_cell
-
-    # def num_cells(self):
-    #     cStart, cEnd = self._plex.getHeightStratum(0)
-    #     return cEnd - cStart
-
-    # def num_facets(self):
-    #     fStart, fEnd = self._plex.getHeightStratum(1)
-    #     return fEnd - fStart
-
-    # def num_faces(self):
-    #     fStart, fEnd = self._plex.getDepthStratum(2)
-    #     return fEnd - fStart
-
-    # def num_edges(self):
-    #     eStart, eEnd = self._plex.getDepthStratum(1)
-    #     return eEnd - eStart
-
-    # def num_vertices(self):
-    #     vStart, vEnd = self._plex.getDepthStratum(0)
-    #     return vEnd - vStart
-
-    # def num_entities(self, d):
-    #     eStart, eEnd = self._plex.getDepthStratum(d)
-    #     return eEnd - eStart
-
-    # def size(self, d):
-    #     return self.num_entities(d)
-
-    # @property
-    # def cell_classes(self):
-    #     return self._entity_classes[self.cell_dimension(), :]
-
-    # @utils.cached_property
-    # def cell_set(self):
-    #     size = list(self.cell_classes)
-    #     return self.parent.cell_set if self.parent else \
-    #         op2.Set(size, "%s_cells" % self.name)
-
-    # def facet_dimension(self):
-    #     """Returns the facet dimension."""
-    #     # Facets have co-dimension 1
-    #     return self.ufl_cell().topological_dimension() - 1
-
-    # def cell_dimension(self):
-    #     """Return the cell dimension"""
-    #     return self.ufl_cell().topological_dimension()
+    def __getattr__(self, name):
+        return getattr(self.topological, name)
 
 
 class ExtrudedMesh(Mesh):

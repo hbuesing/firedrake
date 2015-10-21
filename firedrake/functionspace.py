@@ -34,26 +34,19 @@ class FunctionSpaceBase(object):
         derived types.
     """
 
-    def __init__(self, mesh, topological_function_space):
+    def __init__(self, mesh, topological):
         """TODO"""
 
-        # TODO: too deep!
-        assert mesh._coordinate_function.function_space().mesh() is topological_function_space.mesh()
+        assert mesh.topological is topological.mesh()
 
         self._mesh = mesh
-        self._ufl_element = topological_function_space.ufl_element().reconstruct(domain=mesh)
-        self.topological = topological_function_space
+        self._ufl_element = topological.ufl_element().reconstruct(domain=mesh)
+        self.topological = topological
 
         # # Tell the DM about the layout of the global vector
         # from firedrake.function import Function
         # with Function(self).dat.vec_ro as v:
         #     self._dm.setGlobalVector(v.duplicate())
-
-    def mesh(self):
-        return self._mesh
-
-    def ufl_element(self):
-        return self._ufl_element
 
     # @property
     # def index(self):
@@ -406,31 +399,34 @@ class FunctionSpaceBase(object):
     #     """The product of the :attr:`.dim` of the :class:`.FunctionSpace`."""
     #     return np.prod(self.dim, dtype=int)
 
-    # def ufl_element(self):
-    #     """The :class:`ufl.FiniteElement` used to construct this
-    #     :class:`FunctionSpace`."""
-    #     return self._ufl_element
+    def ufl_element(self):
+        """The :class:`ufl.FiniteElement` used to construct this
+        :class:`FunctionSpace`."""
+        return self._ufl_element
 
-    # def mesh(self):
-    #     """The :class:`Mesh` used to construct this :class:`.FunctionSpace`."""
-    #     return self._mesh
+    def mesh(self):
+        """The :class:`Mesh` used to construct this :class:`.FunctionSpace`."""
+        return self._mesh
 
-    # def __len__(self):
-    #     return 1
+    def __len__(self):
+        return 1
 
-    # def __iter__(self):
-    #     yield self
+    def __iter__(self):
+        yield self
 
-    # def __getitem__(self, i):
-    #     """Return ``self`` if ``i`` is 0 or raise an exception."""
-    #     if i != 0:
-    #         raise IndexError("Only index 0 supported on a FunctionSpace")
-    #     return self
+    def __getitem__(self, i):
+        """Return ``self`` if ``i`` is 0 or raise an exception."""
+        if i != 0:
+            raise IndexError("Only index 0 supported on a FunctionSpace")
+        return self
 
     # def __mul__(self, other):
     #     """Create a :class:`.MixedFunctionSpace` composed of this
     #     :class:`.FunctionSpace` and other"""
     #     return MixedFunctionSpace((self, other))
+
+    def __getattr__(self, name):
+        return getattr(self.topological, name)
 
 
 class FunctionSpace(FunctionSpaceBase):
@@ -467,9 +463,12 @@ class FunctionSpace(FunctionSpaceBase):
     def __init__(self, mesh, family, degree=None, name=None, vfamily=None, vdegree=None):
         mesh.init()
         if isinstance(family, topological.FunctionSpace):
-            super(FunctionSpace, self).__init__(mesh, family)
+            topological_fs = super(FunctionSpace, self).__init__(mesh, family)
         else:
-            raise NotImplementedError("Go away!")
+            element = ufl.FiniteElement(family, domain=mesh.topological.ufl_cell(), degree=degree)
+            topological_fs = topological.FunctionSpace(mesh.topological, element, name=name)
+
+        super(FunctionSpace, self).__init__(mesh, topological_fs)
 
         # if self._initialized:
         #     return
@@ -529,9 +528,14 @@ class VectorFunctionSpace(FunctionSpaceBase):
     def __init__(self, mesh, family, degree=None, dim=None, name=None, vfamily=None, vdegree=None):
         mesh.init()
         if isinstance(family, topological.VectorFunctionSpace):
-            super(VectorFunctionSpace, self).__init__(mesh, family)
+            topological_fs = family
         else:
-            raise NotImplementedError("Go away!")
+            # VectorFunctionSpace dimension defaults to the geometric dimension of the mesh.
+            dim = dim or mesh.ufl_cell().geometric_dimension()
+            element = ufl.VectorElement(family, domain=mesh.topological.ufl_cell(), degree=degree, dim=dim)
+            topological_fs = topological.VectorFunctionSpace(mesh.topological, element, dim, name=name)
+
+        super(VectorFunctionSpace, self).__init__(mesh, topological_fs)
 
         # if self._initialized:
         #     return

@@ -924,6 +924,10 @@ class FunctionSpaceBase(object):
                        offset=offset)
 
     @property
+    def rank(self):
+        return len(self.shape)
+
+    @property
     def dim(self):
         """The product of the :attr:`.dim` of the :class:`.FunctionSpace`."""
         return np.prod(self.shape, dtype=int)
@@ -934,17 +938,17 @@ class FunctionSpaceBase(object):
     def ufl_element(self):
         return self._ufl_element
 
-    # def __len__(self):
-    #     return 1
+    def __len__(self):
+        return 1
 
-    # def __iter__(self):
-    #     yield self
+    def __iter__(self):
+        yield self
 
-    # def __getitem__(self, i):
-    #     """Return ``self`` if ``i`` is 0 or raise an exception."""
-    #     if i != 0:
-    #         raise IndexError("Only index 0 supported on a FunctionSpace")
-    #     return self
+    def __getitem__(self, i):
+        """Return ``self`` if ``i`` is 0 or raise an exception."""
+        if i != 0:
+            raise IndexError("Only index 0 supported on a FunctionSpace")
+        return self
 
     # def __mul__(self, other):
     #     """Create a :class:`.MixedFunctionSpace` composed of this
@@ -1042,37 +1046,37 @@ class Function(ufl.Coefficient):
     #                         name="view[%d](%s)" % (i, self.name()))
     #     return self.split()[i]
 
-    # @property
-    # def cell_set(self):
-    #     """The :class:`pyop2.Set` of cells for the mesh on which this
-    #     :class:`Function` is defined."""
-    #     return self._function_space._mesh.cell_set
+    @property
+    def cell_set(self):
+        """The :class:`pyop2.Set` of cells for the mesh on which this
+        :class:`Function` is defined."""
+        return self._function_space._mesh.cell_set
 
-    # @property
-    # def node_set(self):
-    #     """A :class:`pyop2.Set` containing the nodes of this
-    #     :class:`Function`. One or (for
-    #     :class:`.VectorFunctionSpace`\s) more degrees of freedom are
-    #     stored at each node.
-    #     """
-    #     return self._function_space.node_set
+    @property
+    def node_set(self):
+        """A :class:`pyop2.Set` containing the nodes of this
+        :class:`Function`. One or (for
+        :class:`.VectorFunctionSpace`\s) more degrees of freedom are
+        stored at each node.
+        """
+        return self._function_space.node_set
 
-    # @property
-    # def dof_dset(self):
-    #     """A :class:`pyop2.DataSet` containing the degrees of freedom of
-    #     this :class:`Function`."""
-    #     return self._function_space.dof_dset
+    @property
+    def dof_dset(self):
+        """A :class:`pyop2.DataSet` containing the degrees of freedom of
+        this :class:`Function`."""
+        return self._function_space.dof_dset
 
-    # def cell_node_map(self, bcs=None):
-    #     return self._function_space.cell_node_map(bcs)
+    def cell_node_map(self, bcs=None):
+        return self._function_space.cell_node_map(bcs)
     # cell_node_map.__doc__ = functionspace.FunctionSpace.cell_node_map.__doc__
 
-    # def interior_facet_node_map(self, bcs=None):
-    #     return self._function_space.interior_facet_node_map(bcs)
+    def interior_facet_node_map(self, bcs=None):
+        return self._function_space.interior_facet_node_map(bcs)
     # interior_facet_node_map.__doc__ = functionspace.FunctionSpace.interior_facet_node_map.__doc__
 
-    # def exterior_facet_node_map(self, bcs=None):
-    #     return self._function_space.exterior_facet_node_map(bcs)
+    def exterior_facet_node_map(self, bcs=None):
+        return self._function_space.exterior_facet_node_map(bcs)
     # exterior_facet_node_map.__doc__ = functionspace.FunctionSpace.exterior_facet_node_map.__doc__
 
     def vector(self):

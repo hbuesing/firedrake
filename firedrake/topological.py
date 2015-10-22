@@ -407,8 +407,8 @@ class ExtrudedMesh(Mesh):
 
         self._plex = mesh._plex
         self._plex_renumbering = mesh._plex_renumbering
+        self._entity_classes = mesh._entity_classes
         # TODO:
-        # self._entity_classes = mesh._entity_classes
         # self.name = mesh.name
         # self._cell_numbering = mesh._cell_numbering
 
@@ -508,7 +508,7 @@ class FunctionSpaceBase(object):
 
             # Compute the offset for the extrusion process
             self.offset = eutils.compute_offset(self.fiat_element.entity_dofs(),
-                                                self.flattened_element.entity_dofs(),
+                                                flattened_element.entity_dofs(),
                                                 self.fiat_element.space_dimension())
 
             # Compute the top and bottom masks to identify boundary dofs

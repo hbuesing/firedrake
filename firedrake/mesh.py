@@ -1,7 +1,6 @@
 from __future__ import absolute_import
 import numpy as np
 import os
-import FIAT
 import ufl
 import weakref
 
@@ -12,7 +11,6 @@ from pyop2.profiling import timed_function, timed_region, profile
 
 import firedrake.dmplex as dmplex
 import firedrake.extrusion_utils as eutils
-import firedrake.fiat_utils as fiat_utils
 import firedrake.topological as topological
 import firedrake.utils as utils
 from firedrake.parameters import parameters
@@ -239,15 +237,16 @@ class Mesh(object):
         self.uid = utils._new_uid()
 
         # Create mesh topology
-        self._topology = topological.Mesh(plex, name=name, reorder=reorder, distribute=distribute)
+        self._topological = topological.Mesh(plex, name=name, reorder=reorder, distribute=distribute)
 
+        ufl_cell = self.topological.ufl_cell()
         if geometric_dim is None:
-            geometric_dim = self._topology.ufl_cell().topological_dimension()
+            geometric_dim = ufl_cell.topological_dimension()
 
         def callback(self):
             del self._callback
             # Finish the initialisation of mesh topology
-            self._topology.init()
+            self.topological.init()
 
             # Note that for bendy elements, this needs to change.
             with timed_region("Mesh: coordinate field"):
@@ -261,32 +260,34 @@ class Mesh(object):
                     #                                      val=periodic_coords,
                     #                                      name="Coordinates")
                 else:
-                    coordinate_elem = ufl.VectorElement("Lagrange", self._topology.ufl_cell(), 1, dim=geometric_dim)
-                    coordinate_fs = topological.VectorFunctionSpace(self._topology, coordinate_elem, geometric_dim)
+                    coordinates_el = ufl.VectorElement("Lagrange", ufl_cell, 1, dim=geometric_dim)
+                    coordinates_fs = topological.VectorFunctionSpace(self.topological,
+                                                                     coordinates_el,
+                                                                     geometric_dim)
 
-                    coordinates = dmplex.reordered_coords(plex, coordinate_fs._global_numbering,
-                                                          (self._topology.num_vertices(), geometric_dim))
+                    coordinates = dmplex.reordered_coords(plex, coordinates_fs._global_numbering,
+                                                          (self.topological.num_vertices(), geometric_dim))
 
-                    self._coordinate_function = topological.Function(coordinate_fs,
-                                                                     val=coordinates,
-                                                                     name="Coordinates")
+                    self._coordinates = topological.Function(coordinates_fs,
+                                                             val=coordinates,
+                                                             name="Coordinates")
 
             # Set UFL domain
-            self._ufl_domain = ufl.Domain(self._coordinate_function)
+            self._ufl_domain = ufl.Domain(self._coordinates)
 
             # Add subdomain_data to the measure objects we store with
             # the mesh.  These are weakrefs for consistency with the
             # "global" measure objects
-            self._dx = ufl.Measure('cell', subdomain_data=weakref.ref(self._coordinate_function))
-            self._ds = ufl.Measure('exterior_facet', subdomain_data=weakref.ref(self._coordinate_function))
-            self._dS = ufl.Measure('interior_facet', subdomain_data=weakref.ref(self._coordinate_function))
+            self._dx = ufl.Measure('cell', subdomain_data=weakref.ref(self._coordinates))
+            self._ds = ufl.Measure('exterior_facet', subdomain_data=weakref.ref(self._coordinates))
+            self._dS = ufl.Measure('interior_facet', subdomain_data=weakref.ref(self._coordinates))
             # Set the subdomain_data on all the default measures to this
             # coordinate field.
             # We don't set the domain on the measure since this causes
             # an uncollectable reference in the global space (dx is
             # global).  Furthermore, it's never used anyway.
             for measure in [ufl.dx, ufl.ds, ufl.dS]:
-                measure._subdomain_data = weakref.ref(self._coordinate_function)
+                measure._subdomain_data = weakref.ref(self._coordinates)
 
         self._callback = callback
 
@@ -300,7 +301,7 @@ class Mesh(object):
 
     @property
     def topological(self):
-        return self._topology
+        return self._topological
 
     # def ufl_id(self):
     #     return id(self)
@@ -320,10 +321,10 @@ class Mesh(object):
         import firedrake.function as function
         self.init()
 
-        coordinate_fs = self._coordinate_function.function_space()
+        coordinates_fs = self._coordinates.function_space()
         # TODO: why VectorFunctionSpace?
-        V = functionspace.VectorFunctionSpace(self, coordinate_fs)
-        f = function.Function(V, val=self._coordinate_function)
+        V = functionspace.VectorFunctionSpace(self, coordinates_fs)
+        f = function.Function(V, val=self._coordinates)
         return f
 
     # def cell_orientations(self):
@@ -461,60 +462,24 @@ class ExtrudedMesh(Mesh):
     @profile
     def __init__(self, mesh, layers, layer_height=None, extrusion_type='uniform', kernel=None, gdim=None):
         # A cache of function spaces that have been built on this mesh
-        import firedrake.function as function
-        import firedrake.functionspace as functionspace
-
         self._cache = {}
+        self.uid = utils._new_uid()
+
         mesh.init()
-        self._old_mesh = mesh
-        if layers < 1:
-            raise RuntimeError("Must have at least one layer of extruded cells (not %d)" % layers)
-        # All internal logic works with layers of base mesh (not layers of cells)
-        self._layers = layers + 1
-        self.parent = mesh.parent
-        self.uid = mesh.uid
-        self.name = mesh.name
-        self._plex = mesh._plex
-        self._plex_renumbering = mesh._plex_renumbering
-        self._cell_numbering = mesh._cell_numbering
-        self._entity_classes = mesh._entity_classes
-
-        interior_f = self._old_mesh.interior_facets
-        self._interior_facets = _Facets(self, interior_f.classes,
-                                        "interior",
-                                        interior_f.facet_cell,
-                                        interior_f.local_facet_number)
-        exterior_f = self._old_mesh.exterior_facets
-        self._exterior_facets = _Facets(self, exterior_f.classes,
-                                        "exterior",
-                                        exterior_f.facet_cell,
-                                        exterior_f.local_facet_number,
-                                        exterior_f.markers,
-                                        unique_markers=exterior_f.unique_markers)
-
-        self.ufl_cell_element = ufl.FiniteElement("Lagrange",
-                                                  domain=mesh.ufl_cell(),
-                                                  degree=1)
-        self.ufl_interval_element = ufl.FiniteElement("Lagrange",
-                                                      domain=ufl.Cell("interval", 1),
-                                                      degree=1)
-
-        self.fiat_base_element = fiat_utils.fiat_from_ufl_element(self.ufl_cell_element)
-        self.fiat_vert_element = fiat_utils.fiat_from_ufl_element(self.ufl_interval_element)
-
-        fiat_element = FIAT.tensor_finite_element.TensorFiniteElement(self.fiat_base_element, self.fiat_vert_element)
+        self._base_mesh = mesh
+        self._topological = topological.ExtrudedMesh(mesh.topological, layers)
+        # self.name = mesh.name
+        # self._plex = mesh._plex
+        # self._plex_renumbering = mesh._plex_renumbering
+        # self._cell_numbering = mesh._cell_numbering
+        # self._entity_classes = mesh._entity_classes
 
         if extrusion_type == "uniform":
-            # *must* add a new dimension
-            self._ufl_cell = ufl.OuterProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1), gdim=mesh.ufl_cell().geometric_dimension() + 1)
-
+            pass
         elif extrusion_type in ("radial", "radial_hedgehog"):
             # do not allow radial extrusion if tdim = gdim
             if mesh.ufl_cell().geometric_dimension() == mesh.ufl_cell().topological_dimension():
                 raise RuntimeError("Cannot radially-extrude a mesh with equal geometric and topological dimension")
-            # otherwise, all is fine, so make cell
-            self._ufl_cell = ufl.OuterProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1))
-
         else:
             # check for kernel
             if kernel is None:
@@ -522,16 +487,6 @@ class ExtrudedMesh(Mesh):
             # otherwise, use the gdim that was passed in
             if gdim is None:
                 raise RuntimeError("The geometric dimension of the mesh must be specified if a custom extrusion kernel is used")
-            self._ufl_cell = ufl.OuterProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1), gdim=gdim)
-
-        self._ufl_domain = ufl.Domain(self.ufl_cell(), data=self)
-        flat_temp = fiat_utils.FlattenedElement(fiat_element)
-
-        # Calculated dofs_per_column from flattened_element and layers.
-        # The mirrored elements have to be counted only once.
-        # Then multiply by layers and layers - 1 accordingly.
-        self.dofs_per_column = eutils.compute_extruded_dofs(fiat_element, flat_temp.entity_dofs(),
-                                                            layers)
 
         # Compute Coordinates of the extruded mesh
         if layer_height is None:
@@ -541,118 +496,42 @@ class ExtrudedMesh(Mesh):
         if extrusion_type == 'radial_hedgehog':
             hfamily = "DG"
         else:
-            hfamily = mesh.coordinates.element().family()
-        hdegree = mesh.coordinates.element().degree()
+            hfamily = mesh._coordinates.element().family()
+        hdegree = mesh._coordinates.element().degree()
 
-        self._coordinate_fs = functionspace.VectorFunctionSpace(self, hfamily,
-                                                                hdegree,
-                                                                vfamily="CG",
-                                                                vdegree=1)
+        base_cell = mesh._coordinates.element().cell()
+        if gdim is None:
+            gdim = ufl.OuterProductCell(base_cell, ufl.interval).topological_dimension()
+        base_cell_el = ufl.FiniteElement(hfamily, base_cell, hdegree)
+        interval_el = ufl.FiniteElement("Lagrange", ufl.interval, 1)
+        coordinates_el = ufl.OuterProductVectorElement(base_cell_el, interval_el, dim=gdim)
+        coordinates_fs = topological.VectorFunctionSpace(self.topological, coordinates_el, gdim)
 
-        self.coordinates = function.Function(self._coordinate_fs)
-        self._ufl_domain = ufl.Domain(self.coordinates)
+        self._coordinates = topological.Function(coordinates_fs, name="Coordinates")
+        self._ufl_domain = ufl.Domain(self._coordinates)
+
         eutils.make_extruded_coords(self, layer_height, extrusion_type=extrusion_type,
                                     kernel=kernel)
-        if extrusion_type == "radial_hedgehog":
-            fs = functionspace.VectorFunctionSpace(self, "CG", hdegree, vfamily="CG", vdegree=1)
-            self.radial_coordinates = function.Function(fs)
-            eutils.make_extruded_coords(self, layer_height, extrusion_type="radial",
-                                        output_coords=self.radial_coordinates)
+        # TODO:
+        # if extrusion_type == "radial_hedgehog":
+        #     fs = functionspace.VectorFunctionSpace(self, "CG", hdegree, vfamily="CG", vdegree=1)
+        #     self.radial_coordinates = function.Function(fs)
+        #     eutils.make_extruded_coords(self, layer_height, extrusion_type="radial",
+        #                                 output_coords=self.radial_coordinates)
 
-        # Build a new ufl element for this function space with the
-        # correct domain.  This is necessary since this function space
-        # is in the cache and will be picked up by later
-        # VectorFunctionSpace construction.
-        self._coordinate_fs._ufl_element = self._coordinate_fs.ufl_element().reconstruct(domain=self.ufl_domain())
-        # HACK alert!
-        # Replace coordinate Function by one that has a real domain on it (but don't copy values)
-        self.coordinates = function.Function(self._coordinate_fs, val=self.coordinates.dat)
-        # Add subdomain_data to the measure objects we store with
-        # the mesh.  These are weakrefs for consistency with the
-        # "global" measure objects
-        self._dx = ufl.Measure('cell', subdomain_data=weakref.ref(self.coordinates))
-        self._ds = ufl.Measure('exterior_facet', subdomain_data=weakref.ref(self.coordinates))
-        self._dS = ufl.Measure('interior_facet', subdomain_data=weakref.ref(self.coordinates))
-        self._ds_t = ufl.Measure('exterior_facet_top', subdomain_data=weakref.ref(self.coordinates))
-        self._ds_b = ufl.Measure('exterior_facet_bottom', subdomain_data=weakref.ref(self.coordinates))
-        self._ds_v = ufl.Measure('exterior_facet_vert', subdomain_data=weakref.ref(self.coordinates))
-        self._dS_h = ufl.Measure('interior_facet_horiz', subdomain_data=weakref.ref(self.coordinates))
-        self._dS_v = ufl.Measure('interior_facet_vert', subdomain_data=weakref.ref(self.coordinates))
-        # Set the subdomain_data on all the default measures to this
-        # coordinate field.  We don't set the domain on the measure
-        # since this causes an uncollectable reference in the global
-        # space (dx is global).  Furthermore, it's never used anyway.
+        # Add subdomain_data to the measure objects we store with the mesh.
+        # These are weakrefs for consistency with the "global" measure objects
+        self._dx = ufl.Measure('cell', subdomain_data=weakref.ref(self._coordinates))
+        self._ds = ufl.Measure('exterior_facet', subdomain_data=weakref.ref(self._coordinates))
+        self._dS = ufl.Measure('interior_facet', subdomain_data=weakref.ref(self._coordinates))
+        self._ds_t = ufl.Measure('exterior_facet_top', subdomain_data=weakref.ref(self._coordinates))
+        self._ds_b = ufl.Measure('exterior_facet_bottom', subdomain_data=weakref.ref(self._coordinates))
+        self._ds_v = ufl.Measure('exterior_facet_vert', subdomain_data=weakref.ref(self._coordinates))
+        self._dS_h = ufl.Measure('interior_facet_horiz', subdomain_data=weakref.ref(self._coordinates))
+        self._dS_v = ufl.Measure('interior_facet_vert', subdomain_data=weakref.ref(self._coordinates))
+        # Set the subdomain_data on all the default measures to this coordinate
+        # field.  We don't set the domain on the measure since this causes an
+        # uncollectable reference in the global space (dx is global).
+        # Furthermore, it's never used anyway.
         for measure in [ufl.ds, ufl.dS, ufl.dx, ufl.ds_t, ufl.ds_b, ufl.ds_v, ufl.dS_h, ufl.dS_v]:
-            measure._subdomain_data = weakref.ref(self.coordinates)
-
-    @property
-    def cell_closure(self):
-        """2D array of ordered cell closures
-
-        Each row contains ordered cell entities for a cell, one row per cell.
-        """
-        return self._old_mesh.cell_closure
-
-    def create_cell_node_list(self, global_numbering, fiat_element):
-        """Builds the DoF mapping.
-
-        :arg global_numbering: Section describing the global DoF numbering
-        :arg fiat_element: The FIAT element for the cell
-        """
-        return dmplex.get_cell_nodes(global_numbering,
-                                     self.cell_closure,
-                                     fiat_utils.FlattenedElement(fiat_element))
-
-    @property
-    def layers(self):
-        """Return the number of layers of the extruded mesh
-        represented by the number of occurences of the base mesh."""
-        return self._layers
-
-    @utils.cached_property
-    def cell_set(self):
-        return self.parent.cell_set if self.parent else \
-            op2.ExtrudedSet(self._old_mesh.cell_set, layers=self._layers)
-
-    @property
-    def exterior_facets(self):
-        return self._exterior_facets
-
-    @property
-    def interior_facets(self):
-        return self._interior_facets
-
-    @property
-    def geometric_dimension(self):
-        return self.ufl_cell().geometric_dimension()
-
-    def cell_dimension(self):
-        """Return the cell dimension"""
-        if self.geometric_dimension == 3:
-            return (2, 1)
-        elif self.geometric_dimension == 2:
-            return (1, 1)
-        else:
-            raise RuntimeError("Dimension computation not supported for gdim %d",
-                               self.geometric_dimension)
-
-    def facet_dimension(self):
-        """Returns the facet dimension.
-
-        .. note::
-
-            This only returns the dimension of the "side" (vertical) facets,
-            not the "top" or "bottom" (horizontal) facets.
-
-        """
-        # The facet is indexed by (base-ele-codim 1, 1) for
-        # extruded meshes.
-        # e.g. for the two supported options of
-        # triangle x interval interval x interval it's (1, 1) and
-        # (0, 1) respectively.
-        if self.geometric_dimension == 3:
-            return (1, 1)
-        elif self.geometric_dimension == 2:
-            return (0, 1)
-        else:
-            raise RuntimeError("Dimension computation for other than 2D or 3D extruded meshes not supported.")
+            measure._subdomain_data = weakref.ref(self._coordinates)

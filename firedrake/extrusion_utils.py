@@ -2,7 +2,6 @@ from __future__ import absolute_import
 import numpy as np
 
 from pyop2 import op2
-import ufl
 
 import firedrake.fiat_utils as fiat_utils
 
@@ -222,8 +221,8 @@ def make_extruded_coords(extruded_mesh, layer_height,
         raise NotImplementedError('Unsupported extrusion type "%s"' % extrusion_type)
 
     # Dat to hold layer number
-    import firedrake.topological as t
-    layer_fs = t.FunctionSpace(extruded_mesh.topological, ufl.FiniteElement('DG', extruded_mesh.topological, 0))
+    import firedrake.functionspace as fs
+    layer_fs = fs.FunctionSpaceT(extruded_mesh.t, 'DG', 0)
     layers = extruded_mesh.layers
     layer = op2.Dat(layer_fs.dof_dset,
                     np.repeat(np.arange(layers-1, dtype=np.int32),

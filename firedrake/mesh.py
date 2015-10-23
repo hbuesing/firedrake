@@ -6,18 +6,136 @@ import weakref
 
 from pyop2 import op2
 from pyop2.profiling import timed_function, timed_region, profile
+from pyop2.utils import as_tuple
 
-# import coffee.base as ast
+import coffee.base as ast
 
 import firedrake.dmplex as dmplex
 import firedrake.extrusion_utils as eutils
-import firedrake.topological as topological
+import firedrake.fiat_utils as fiat_utils
 import firedrake.utils as utils
 from firedrake.parameters import parameters
 from firedrake.petsc import PETSc
 
 
 __all__ = ['Mesh', 'ExtrudedMesh']
+
+
+class _Facets(object):
+    """Wrapper class for facet interation information on a :class:`Mesh`
+
+    .. warning::
+
+       The unique_markers argument **must** be the same on all processes."""
+    def __init__(self, mesh, classes, kind, facet_cell, local_facet_number, markers=None,
+                 unique_markers=None):
+
+        self.mesh = mesh
+
+        classes = as_tuple(classes, int, 4)
+        self.classes = classes
+
+        self.kind = kind
+        assert(kind in ["interior", "exterior"])
+        if kind == "interior":
+            self._rank = 2
+        else:
+            self._rank = 1
+
+        self.facet_cell = facet_cell
+
+        self.local_facet_number = local_facet_number
+
+        # assert that markers is a proper subset of unique_markers
+        if markers is not None:
+            for marker in markers:
+                assert (marker in unique_markers), \
+                    "Every marker has to be contained in unique_markers"
+
+        self.markers = markers
+        self.unique_markers = [] if unique_markers is None else unique_markers
+        self._subsets = {}
+
+    @utils.cached_property
+    def set(self):
+        size = self.classes
+        halo = None
+        if isinstance(self.mesh, ExtrudedMeshT):
+            if self.kind == "interior":
+                base = self.mesh._base_mesh.interior_facets.set
+            else:
+                base = self.mesh._base_mesh.exterior_facets.set
+            return op2.ExtrudedSet(base, layers=self.mesh.layers)
+        return op2.Set(size, "%s_%s_facets" % (self.mesh.name, self.kind), halo=halo)
+
+    @property
+    def bottom_set(self):
+        '''Returns the bottom row of cells.'''
+        return self.mesh.cell_set
+
+    @utils.cached_property
+    def _null_subset(self):
+        '''Empty subset for the case in which there are no facets with
+        a given marker value. This is required because not all
+        markers need be represented on all processors.'''
+
+        return op2.Subset(self.set, [])
+
+    def measure_set(self, integral_type, subdomain_id):
+        '''Return the iteration set appropriate to measure. This will
+        either be for all the interior or exterior (as appropriate)
+        facets, or for a particular numbered subdomain.'''
+
+        # ufl.Measure doesn't have enums for these any more :(
+        if subdomain_id in ["everywhere", "otherwise"]:
+            if integral_type == "exterior_facet_bottom":
+                return [(op2.ON_BOTTOM, self.bottom_set)]
+            elif integral_type == "exterior_facet_top":
+                return [(op2.ON_TOP, self.bottom_set)]
+            elif integral_type == "interior_facet_horiz":
+                return self.bottom_set
+            else:
+                return self.set
+        else:
+            return self.subset(subdomain_id)
+
+    def subset(self, markers):
+        """Return the subset corresponding to a given marker value.
+
+        :param markers: integer marker id or an iterable of marker ids"""
+        if self.markers is None:
+            return self._null_subset
+        markers = as_tuple(markers, int)
+        try:
+            return self._subsets[markers]
+        except KeyError:
+            # check that the given markers are valid
+            for marker in markers:
+                if marker not in self.unique_markers:
+                    raise LookupError(
+                        '{0} is not a valid marker'.
+                        format(marker))
+
+            # build a list of indices corresponding to the subsets selected by
+            # markers
+            indices = np.concatenate([np.nonzero(self.markers == i)[0]
+                                      for i in markers])
+            self._subsets[markers] = op2.Subset(self.set, indices)
+            return self._subsets[markers]
+
+    @utils.cached_property
+    def local_facet_dat(self):
+        """Dat indicating which local facet of each adjacent
+        cell corresponds to the current facet."""
+
+        return op2.Dat(op2.DataSet(self.set, self._rank), self.local_facet_number,
+                       np.uintc, "%s_%s_local_facet_number" % (self.mesh.name, self.kind))
+
+    @utils.cached_property
+    def facet_cell_map(self):
+        """Map from facets to cells."""
+        return op2.Map(self.set, self.bottom_set, self._rank, self.facet_cell,
+                       "facet_to_cell_map")
 
 
 def _from_gmsh(filename):
@@ -159,6 +277,251 @@ def _from_cell_list(dim, cells, coords, comm=None):
                                              comm=comm)
 
 
+class MeshT(object):
+    """A representation of mesh topology."""
+
+    def __init__(self, plex, name, reorder, distribute):
+        utils._init()
+
+        self._plex = plex
+        self.name = name
+
+        dim = plex.getDimension()
+
+        cStart, cEnd = plex.getHeightStratum(0)  # cells
+        cell_nfacets = plex.getConeSize(cStart)
+
+        self._ufl_cell = ufl.Cell(fiat_utils._cells[dim][cell_nfacets])
+
+        # Mark exterior and interior facets
+        # Note.  This must come before distribution, because otherwise
+        # DMPlex will consider facets on the domain boundary to be
+        # exterior, which is wrong.
+        with timed_region("Mesh: label facets"):
+            label_boundary = (op2.MPI.comm.size == 1) or distribute
+            dmplex.label_facets(plex, label_boundary=label_boundary)
+
+        # Distribute the dm to all ranks
+        if op2.MPI.comm.size > 1 and distribute:
+            # We distribute with overlap zero, in case we're going to
+            # refine this mesh in parallel.  Later, when we actually use
+            # it, we grow the halo.
+            plex.distribute(overlap=0)
+
+        def callback(self):
+            del self._callback
+            if op2.MPI.comm.size > 1:
+                self._plex.distributeOverlap(1)
+
+            if reorder:
+                with timed_region("Mesh: reorder"):
+                    old_to_new = self._plex.getOrdering(PETSc.Mat.OrderingType.RCM).indices
+                    reordering = np.empty_like(old_to_new)
+                    reordering[old_to_new] = np.arange(old_to_new.size, dtype=old_to_new.dtype)
+            else:
+                # No reordering
+                reordering = None
+
+            # Mark OP2 entities and derive the resulting Plex renumbering
+            with timed_region("Mesh: renumbering"):
+                dmplex.mark_entity_classes(self._plex)
+                self._entity_classes = dmplex.get_entity_classes(self._plex)
+                self._plex_renumbering = dmplex.plex_renumbering(self._plex,
+                                                                 self._entity_classes,
+                                                                 reordering)
+
+            with timed_region("Mesh: cell numbering"):
+                # Derive a cell numbering from the Plex renumbering
+                entity_dofs = np.zeros(dim+1, dtype=np.int32)
+                entity_dofs[-1] = 1
+
+                self._cell_numbering = self._plex.createSection([1], entity_dofs,
+                                                                perm=self._plex_renumbering)
+                entity_dofs[:] = 0
+                entity_dofs[0] = 1
+                self._vertex_numbering = self._plex.createSection([1], entity_dofs,
+                                                                  perm=self._plex_renumbering)
+
+        self._callback = callback
+
+    def init(self):
+        """Finish the initialisation of the mesh."""
+        if hasattr(self, '_callback'):
+            self._callback(self)
+
+    @property
+    def layers(self):
+        return None
+
+    def ufl_cell(self):
+        """The UFL :class:`~ufl.cell.Cell` associated with the mesh."""
+        return self._ufl_cell
+
+    @utils.cached_property
+    def cell_closure(self):
+        """2D array of ordered cell closures
+
+        Each row contains ordered cell entities for a cell, one row per cell.
+        """
+        plex = self._plex
+        dim = plex.getDimension()
+
+        # Cell numbering and global vertex numbering
+        cell_numbering = self._cell_numbering
+        vertex_numbering = self._vertex_numbering.createGlobalSection(plex.getPointSF())
+
+        cellname = self.ufl_cell().cellname()
+        if cellname in ufl.cell.affine_cells:
+            # Simplex mesh
+            cStart, cEnd = plex.getHeightStratum(0)
+            a_closure = plex.getTransitiveClosure(cStart)[0]
+
+            entity_per_cell = np.zeros(dim + 1, dtype=np.int32)
+            for dim in xrange(dim + 1):
+                start, end = plex.getDepthStratum(dim)
+                entity_per_cell[dim] = sum(map(lambda idx: start <= idx < end,
+                                               a_closure))
+
+            return dmplex.closure_ordering(plex, vertex_numbering,
+                                           cell_numbering, entity_per_cell)
+
+        elif cellname == "quadrilateral":
+            # Quadrilateral mesh
+            cell_ranks = dmplex.get_cell_remote_ranks(plex)
+
+            facet_orientations = dmplex.quadrilateral_facet_orientations(
+                plex, vertex_numbering, cell_ranks)
+
+            cell_orientations = dmplex.orientations_facet2cell(
+                plex, vertex_numbering, cell_ranks,
+                facet_orientations, cell_numbering)
+
+            dmplex.exchange_cell_orientations(plex,
+                                              cell_numbering,
+                                              cell_orientations)
+
+            return dmplex.quadrilateral_closure_ordering(
+                plex, vertex_numbering, cell_numbering, cell_orientations)
+
+        else:
+            raise NotImplementedError("Cell type '%s' not supported." % cellname)
+
+    @utils.cached_property
+    def exterior_facets(self):
+        if self._plex.getStratumSize("exterior_facets", 1) > 0:
+            # Compute the facet_numbering
+
+            # Order exterior facets by OP2 entity class
+            exterior_facets, exterior_facet_classes = \
+                dmplex.get_facets_by_class(self._plex, "exterior_facets")
+
+            # Derive attached boundary IDs
+            if self._plex.hasLabel("boundary_ids"):
+                boundary_ids = np.zeros(exterior_facets.size, dtype=np.int32)
+                for i, facet in enumerate(exterior_facets):
+                    boundary_ids[i] = self._plex.getLabelValue("boundary_ids", facet)
+
+                unique_ids = np.sort(self._plex.getLabelIdIS("boundary_ids").indices)
+            else:
+                boundary_ids = None
+                unique_ids = None
+
+            exterior_local_facet_number, exterior_facet_cell = \
+                dmplex.facet_numbering(self._plex, "exterior",
+                                       exterior_facets,
+                                       self._cell_numbering,
+                                       self.cell_closure)
+
+            return _Facets(self, exterior_facet_classes, "exterior",
+                           exterior_facet_cell, exterior_local_facet_number,
+                           boundary_ids, unique_markers=unique_ids)
+        else:
+            if self._plex.hasLabel("boundary_ids"):
+                unique_ids = np.sort(self._plex.getLabelIdIS("boundary_ids").indices)
+            else:
+                unique_ids = None
+            return _Facets(self, 0, "exterior", None, None,
+                           unique_markers=unique_ids)
+
+    @utils.cached_property
+    def interior_facets(self):
+        if self._plex.getStratumSize("interior_facets", 1) > 0:
+            # Compute the facet_numbering
+
+            # Order interior facets by OP2 entity class
+            interior_facets, interior_facet_classes = \
+                dmplex.get_facets_by_class(self._plex, "interior_facets")
+
+            interior_local_facet_number, interior_facet_cell = \
+                dmplex.facet_numbering(self._plex, "interior",
+                                       interior_facets,
+                                       self._cell_numbering,
+                                       self.cell_closure)
+
+            return _Facets(self, interior_facet_classes, "interior",
+                           interior_facet_cell, interior_local_facet_number)
+        else:
+            return _Facets(self, 0, "interior", None, None)
+
+    def make_cell_node_list(self, global_numbering, fiat_element):
+        """Builds the DoF mapping.
+
+        :arg global_numbering: Section describing the global DoF numbering
+        :arg fiat_element: The FIAT element for the cell
+        """
+        return dmplex.get_cell_nodes(global_numbering,
+                                     self.cell_closure,
+                                     fiat_element)
+
+    def make_global_numbering(self, dofs_per_entity):
+        # Create the PetscSection mapping topological entities to DoFs
+        return self._plex.createSection([1], dofs_per_entity,
+                                        perm=self._plex_renumbering)
+
+    # TODO: cell_orientations
+
+    def num_cells(self):
+        cStart, cEnd = self._plex.getHeightStratum(0)
+        return cEnd - cStart
+
+    def num_facets(self):
+        fStart, fEnd = self._plex.getHeightStratum(1)
+        return fEnd - fStart
+
+    def num_faces(self):
+        fStart, fEnd = self._plex.getDepthStratum(2)
+        return fEnd - fStart
+
+    def num_edges(self):
+        eStart, eEnd = self._plex.getDepthStratum(1)
+        return eEnd - eStart
+
+    def num_vertices(self):
+        vStart, vEnd = self._plex.getDepthStratum(0)
+        return vEnd - vStart
+
+    def num_entities(self, d):
+        eStart, eEnd = self._plex.getDepthStratum(d)
+        return eEnd - eStart
+
+    def size(self, d):
+        return self.num_entities(d)
+
+    def cell_dimension(self):
+        """Returns the cell dimension."""
+        return self.ufl_cell().topological_dimension()
+
+    def facet_dimension(self):
+        """Returns the facet dimension."""
+        # Facets have co-dimension 1
+        return self.ufl_cell().topological_dimension() - 1
+
+    @utils.cached_property
+    def cell_set(self):
+        size = list(self._entity_classes[self.cell_dimension(), :])
+        return op2.Set(size, "%s_cells" % self.name)
+
+
 class Mesh(object):
     """A representation of mesh topology and geometry."""
 
@@ -237,20 +600,24 @@ class Mesh(object):
         self.uid = utils._new_uid()
 
         # Create mesh topology
-        self._topological = topological.Mesh(plex, name=name, reorder=reorder, distribute=distribute)
+        self._t = MeshT(plex, name=name, reorder=reorder, distribute=distribute)
 
-        ufl_cell = self.topological.ufl_cell()
+        ufl_cell = self.t.ufl_cell()
         if geometric_dim is None:
             geometric_dim = ufl_cell.topological_dimension()
 
         def callback(self):
+            import firedrake.functionspace as functionspace
+            import firedrake.function as function
+
             del self._callback
             # Finish the initialisation of mesh topology
-            self.topological.init()
+            self.t.init()
 
             # Note that for bendy elements, this needs to change.
             with timed_region("Mesh: coordinate field"):
                 if periodic_coords is not None:
+                    # TODO:
                     raise NotImplementedError("Not dead code!")
                     # if self.ufl_cell().geometric_dimension() != 1:
                     #     raise NotImplementedError("Periodic coordinates in more than 1D are unsupported")
@@ -260,17 +627,15 @@ class Mesh(object):
                     #                                      val=periodic_coords,
                     #                                      name="Coordinates")
                 else:
-                    coordinates_el = ufl.VectorElement("Lagrange", ufl_cell, 1, dim=geometric_dim)
-                    coordinates_fs = topological.VectorFunctionSpace(self.topological,
-                                                                     coordinates_el,
-                                                                     geometric_dim)
+                    coordinates_fs = functionspace.VectorFunctionSpaceT(self.t, "Lagrange", 1,
+                                                                        dim=geometric_dim)
 
                     coordinates = dmplex.reordered_coords(plex, coordinates_fs._global_numbering,
-                                                          (self.topological.num_vertices(), geometric_dim))
+                                                          (self.t.num_vertices(), geometric_dim))
 
-                    self._coordinates = topological.Function(coordinates_fs,
-                                                             val=coordinates,
-                                                             name="Coordinates")
+                    self._coordinates = function.FunctionT(coordinates_fs,
+                                                           val=coordinates,
+                                                           name="Coordinates")
 
             # Set UFL domain
             self._ufl_domain = ufl.Domain(self._coordinates)
@@ -300,8 +665,9 @@ class Mesh(object):
             self._callback(self)
 
     @property
-    def topological(self):
-        return self._topological
+    def t(self):
+        """The underlying mesh topology object."""
+        return self._t
 
     # def ufl_id(self):
     #     return id(self)
@@ -327,89 +693,176 @@ class Mesh(object):
         f = function.Function(V, val=self._coordinates)
         return f
 
-    # def cell_orientations(self):
-    #     """Return the orientation of each cell in the mesh.
+    def cell_orientations(self):
+        """Return the orientation of each cell in the mesh.
 
-    #     Use :func:`init_cell_orientations` to initialise this data."""
-    #     if not hasattr(self, '_cell_orientations'):
-    #         raise RuntimeError("No cell orientations found, did you forget to call init_cell_orientations?")
-    #     return self._cell_orientations
+        Use :func:`init_cell_orientations` to initialise this data."""
+        if not hasattr(self, '_cell_orientations'):
+            raise RuntimeError("No cell orientations found, did you forget to call init_cell_orientations?")
+        return self._cell_orientations
 
-    # def init_cell_orientations(self, expr):
-    #     """Compute and initialise :attr:`cell_orientations` relative to a specified orientation.
+    def init_cell_orientations(self, expr):
+        """Compute and initialise :attr:`cell_orientations` relative to a specified orientation.
 
-    #     :arg expr: an :class:`.Expression` evaluated to produce a
-    #          reference normal direction.
+        :arg expr: an :class:`.Expression` evaluated to produce a
+             reference normal direction.
 
-    #     """
-    #     import firedrake.function as function
-    #     import firedrake.functionspace as functionspace
+        """
+        import firedrake.function as function
+        import firedrake.functionspace as functionspace
 
-    #     if expr.value_shape()[0] != 3:
-    #         raise NotImplementedError('Only implemented for 3-vectors')
-    #     if self.ufl_cell() not in (ufl.Cell('triangle', 3), ufl.Cell("quadrilateral", 3), ufl.OuterProductCell(ufl.Cell('interval', 3), ufl.Cell('interval')), ufl.OuterProductCell(ufl.Cell('interval', 2), ufl.Cell('interval'), gdim=3)):
-    #         raise NotImplementedError('Only implemented for triangles and quadrilaterals embedded in 3d')
+        if expr.value_shape()[0] != 3:
+            raise NotImplementedError('Only implemented for 3-vectors')
+        if self.ufl_cell() not in (ufl.Cell('triangle', 3), ufl.Cell("quadrilateral", 3), ufl.OuterProductCell(ufl.Cell('interval', 3), ufl.Cell('interval')), ufl.OuterProductCell(ufl.Cell('interval', 2), ufl.Cell('interval'), gdim=3)):
+            raise NotImplementedError('Only implemented for triangles and quadrilaterals embedded in 3d')
 
-    #     if hasattr(self, '_cell_orientations'):
-    #         raise RuntimeError("init_cell_orientations already called, did you mean to do so again?")
+        if hasattr(self, '_cell_orientations'):
+            raise RuntimeError("init_cell_orientations already called, did you mean to do so again?")
 
-    #     v0 = lambda x: ast.Symbol("v0", (x,))
-    #     v1 = lambda x: ast.Symbol("v1", (x,))
-    #     n = lambda x: ast.Symbol("n", (x,))
-    #     x = lambda x: ast.Symbol("x", (x,))
-    #     coords = lambda x, y: ast.Symbol("coords", (x, y))
+        v0 = lambda x: ast.Symbol("v0", (x,))
+        v1 = lambda x: ast.Symbol("v1", (x,))
+        n = lambda x: ast.Symbol("n", (x,))
+        x = lambda x: ast.Symbol("x", (x,))
+        coords = lambda x, y: ast.Symbol("coords", (x, y))
 
-    #     body = []
-    #     body += [ast.Decl("double", v(3)) for v in [v0, v1, n, x]]
-    #     body.append(ast.Decl("double", "dot"))
-    #     body.append(ast.Assign("dot", 0.0))
-    #     body.append(ast.Decl("int", "i"))
+        body = []
+        body += [ast.Decl("double", v(3)) for v in [v0, v1, n, x]]
+        body.append(ast.Decl("double", "dot"))
+        body.append(ast.Assign("dot", 0.0))
+        body.append(ast.Decl("int", "i"))
 
-    #     # if triangle, use v0 = x1 - x0, v1 = x2 - x0
-    #     # otherwise, for the various quads, use v0 = x2 - x0, v1 = x1 - x0
-    #     # recall reference element ordering:
-    #     # triangle: 2        quad: 1 3
-    #     #           0 1            0 2
-    #     if self.ufl_cell() == ufl.Cell('triangle', 3):
-    #         body.append(ast.For(ast.Assign("i", 0), ast.Less("i", 3), ast.Incr("i", 1),
-    #                             [ast.Assign(v0("i"), ast.Sub(coords(1, "i"), coords(0, "i"))),
-    #                              ast.Assign(v1("i"), ast.Sub(coords(2, "i"), coords(0, "i"))),
-    #                              ast.Assign(x("i"), 0.0)]))
-    #     else:
-    #         body.append(ast.For(ast.Assign("i", 0), ast.Less("i", 3), ast.Incr("i", 1),
-    #                             [ast.Assign(v0("i"), ast.Sub(coords(2, "i"), coords(0, "i"))),
-    #                              ast.Assign(v1("i"), ast.Sub(coords(1, "i"), coords(0, "i"))),
-    #                              ast.Assign(x("i"), 0.0)]))
+        # if triangle, use v0 = x1 - x0, v1 = x2 - x0
+        # otherwise, for the various quads, use v0 = x2 - x0, v1 = x1 - x0
+        # recall reference element ordering:
+        # triangle: 2        quad: 1 3
+        #           0 1            0 2
+        if self.ufl_cell() == ufl.Cell('triangle', 3):
+            body.append(ast.For(ast.Assign("i", 0), ast.Less("i", 3), ast.Incr("i", 1),
+                                [ast.Assign(v0("i"), ast.Sub(coords(1, "i"), coords(0, "i"))),
+                                 ast.Assign(v1("i"), ast.Sub(coords(2, "i"), coords(0, "i"))),
+                                 ast.Assign(x("i"), 0.0)]))
+        else:
+            body.append(ast.For(ast.Assign("i", 0), ast.Less("i", 3), ast.Incr("i", 1),
+                                [ast.Assign(v0("i"), ast.Sub(coords(2, "i"), coords(0, "i"))),
+                                 ast.Assign(v1("i"), ast.Sub(coords(1, "i"), coords(0, "i"))),
+                                 ast.Assign(x("i"), 0.0)]))
 
-    #     # n = v0 x v1
-    #     body.append(ast.Assign(n(0), ast.Sub(ast.Prod(v0(1), v1(2)), ast.Prod(v0(2), v1(1)))))
-    #     body.append(ast.Assign(n(1), ast.Sub(ast.Prod(v0(2), v1(0)), ast.Prod(v0(0), v1(2)))))
-    #     body.append(ast.Assign(n(2), ast.Sub(ast.Prod(v0(0), v1(1)), ast.Prod(v0(1), v1(0)))))
+        # n = v0 x v1
+        body.append(ast.Assign(n(0), ast.Sub(ast.Prod(v0(1), v1(2)), ast.Prod(v0(2), v1(1)))))
+        body.append(ast.Assign(n(1), ast.Sub(ast.Prod(v0(2), v1(0)), ast.Prod(v0(0), v1(2)))))
+        body.append(ast.Assign(n(2), ast.Sub(ast.Prod(v0(0), v1(1)), ast.Prod(v0(1), v1(0)))))
 
-    #     body.append(ast.For(ast.Assign("i", 0), ast.Less("i", 3), ast.Incr("i", 1),
-    #                         [ast.Incr(x(j), coords("i", j)) for j in range(3)]))
+        body.append(ast.For(ast.Assign("i", 0), ast.Less("i", 3), ast.Incr("i", 1),
+                            [ast.Incr(x(j), coords("i", j)) for j in range(3)]))
 
-    #     body.extend([ast.FlatBlock("dot += (%(x)s) * n[%(i)d];\n" % {"x": x_, "i": i})
-    #                  for i, x_ in enumerate(expr.code)])
-    #     body.append(ast.Assign("orientation[0][0]", ast.Ternary(ast.Less("dot", 0), 1, 0)))
+        body.extend([ast.FlatBlock("dot += (%(x)s) * n[%(i)d];\n" % {"x": x_, "i": i})
+                     for i, x_ in enumerate(expr.code)])
+        body.append(ast.Assign("orientation[0][0]", ast.Ternary(ast.Less("dot", 0), 1, 0)))
 
-    #     kernel = op2.Kernel(ast.FunDecl("void", "cell_orientations",
-    #                                     [ast.Decl("int**", "orientation"),
-    #                                      ast.Decl("double**", "coords")],
-    #                                     ast.Block(body)),
-    #                         "cell_orientations")
+        kernel = op2.Kernel(ast.FunDecl("void", "cell_orientations",
+                                        [ast.Decl("int**", "orientation"),
+                                         ast.Decl("double**", "coords")],
+                                        ast.Block(body)),
+                            "cell_orientations")
 
-    #     # Build the cell orientations as a DG0 field (so that we can
-    #     # pass it in for facet integrals and the like)
-    #     fs = functionspace.FunctionSpace(self, 'DG', 0)
-    #     cell_orientations = function.Function(fs, name="cell_orientations", dtype=np.int32)
-    #     op2.par_loop(kernel, self.cell_set,
-    #                  cell_orientations.dat(op2.WRITE, cell_orientations.cell_node_map()),
-    #                  self.coordinates.dat(op2.READ, self.coordinates.cell_node_map()))
-    #     self._cell_orientations = cell_orientations
+        # Build the cell orientations as a DG0 field (so that we can
+        # pass it in for facet integrals and the like)
+        fs = functionspace.FunctionSpace(self, 'DG', 0)
+        cell_orientations = function.Function(fs, name="cell_orientations", dtype=np.int32)
+        op2.par_loop(kernel, self.cell_set,
+                     cell_orientations.dat(op2.WRITE, cell_orientations.cell_node_map()),
+                     self.coordinates.dat(op2.READ, self.coordinates.cell_node_map()))
+        self._cell_orientations = cell_orientations
 
     def __getattr__(self, name):
-        return getattr(self.topological, name)
+        return getattr(self.t, name)
+
+
+class ExtrudedMeshT(MeshT):
+    """Build an extruded mesh topology from an input mesh topology
+
+    :arg mesh:           the unstructured base mesh topology
+    :arg layers:         number of extruded cell layers in the "vertical"
+                         direction.
+    """
+
+    def __init__(self, mesh, layers):
+        mesh.init()
+
+        self._base_mesh = mesh
+        if layers < 1:
+            raise RuntimeError("Must have at least one layer of extruded cells (not %d)" % layers)
+        # All internal logic works with layers of base mesh (not layers of cells)
+        self._layers = layers + 1
+        self._ufl_cell = ufl.OuterProductCell(mesh.ufl_cell(), ufl.interval)
+
+        self._plex = mesh._plex
+        self._plex_renumbering = mesh._plex_renumbering
+        self._entity_classes = mesh._entity_classes
+        # TODO:
+        # self.name = mesh.name
+        # self._cell_numbering = mesh._cell_numbering
+
+    @property
+    def cell_closure(self):
+        """2D array of ordered cell closures
+
+        Each row contains ordered cell entities for a cell, one row per cell.
+        """
+        return self._base_mesh.cell_closure
+
+    @utils.cached_property
+    def exterior_facets(self):
+        exterior_facets = self._base_mesh.exterior_facets
+        return _Facets(self, exterior_facets.classes,
+                       "exterior",
+                       exterior_facets.facet_cell,
+                       exterior_facets.local_facet_number,
+                       exterior_facets.markers,
+                       unique_markers=exterior_facets.unique_markers)
+
+    @utils.cached_property
+    def interior_facets(self):
+        interior_facets = self._base_mesh.interior_facets
+        return _Facets(self, interior_facets.classes,
+                       "interior",
+                       interior_facets.facet_cell,
+                       interior_facets.local_facet_number)
+
+    def make_cell_node_list(self, global_numbering, fiat_element):
+        """Builds the DoF mapping.
+
+        :arg global_numbering: Section describing the global DoF numbering
+        :arg fiat_element: The FIAT element for the cell
+        """
+        return dmplex.get_cell_nodes(global_numbering,
+                                     self.cell_closure,
+                                     fiat_utils.FlattenedElement(fiat_element))
+
+    @property
+    def layers(self):
+        """Return the number of layers of the extruded mesh
+        represented by the number of occurences of the base mesh."""
+        return self._layers
+
+    def cell_dimension(self):
+        """Returns the cell dimension."""
+        return (self._base_mesh.cell_dimension(), 1)
+
+    def facet_dimension(self):
+        """Returns the facet dimension.
+
+        .. note::
+
+            This only returns the dimension of the "side" (vertical) facets,
+            not the "top" or "bottom" (horizontal) facets.
+
+        """
+        return (self._base_mesh.facet_dimension(), 1)
+
+    @utils.cached_property
+    def cell_set(self):
+        return op2.ExtrudedSet(self._base_mesh.cell_set, layers=self.layers)
 
 
 class ExtrudedMesh(Mesh):
@@ -461,13 +914,16 @@ class ExtrudedMesh(Mesh):
     @timed_function("Build extruded mesh")
     @profile
     def __init__(self, mesh, layers, layer_height=None, extrusion_type='uniform', kernel=None, gdim=None):
+        import firedrake.functionspace as functionspace
+        import firedrake.function as function
+
         # A cache of function spaces that have been built on this mesh
         self._cache = {}
         self.uid = utils._new_uid()
 
         mesh.init()
         self._base_mesh = mesh
-        self._topological = topological.ExtrudedMesh(mesh.topological, layers)
+        self._t = ExtrudedMeshT(mesh.t, layers)
         # self.name = mesh.name
         # self._plex = mesh._plex
         # self._plex_renumbering = mesh._plex_renumbering
@@ -499,15 +955,12 @@ class ExtrudedMesh(Mesh):
             hfamily = mesh._coordinates.element().family()
         hdegree = mesh._coordinates.element().degree()
 
-        base_cell = mesh._coordinates.element().cell()
         if gdim is None:
-            gdim = ufl.OuterProductCell(base_cell, ufl.interval).topological_dimension()
-        base_cell_el = ufl.FiniteElement(hfamily, base_cell, hdegree)
-        interval_el = ufl.FiniteElement("Lagrange", ufl.interval, 1)
-        coordinates_el = ufl.OuterProductVectorElement(base_cell_el, interval_el, dim=gdim)
-        coordinates_fs = topological.VectorFunctionSpace(self.topological, coordinates_el, gdim)
+            gdim = self.t.ufl_cell().topological_dimension()  # TODO
+        coordinates_fs = functionspace.VectorFunctionSpaceT(self.t, hfamily, hdegree, dim=gdim,
+                                                            vfamily="Lagrange", vdegree=1)
 
-        self._coordinates = topological.Function(coordinates_fs, name="Coordinates")
+        self._coordinates = function.FunctionT(coordinates_fs, name="Coordinates")
         self._ufl_domain = ufl.Domain(self._coordinates)
 
         eutils.make_extruded_coords(self, layer_height, extrusion_type=extrusion_type,

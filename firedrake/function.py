@@ -10,7 +10,6 @@ from pyop2.logger import warning
 
 from firedrake import expression as expression_t
 from firedrake import functionspace
-from firedrake import topological
 from firedrake import utils
 from firedrake import vector
 try:
@@ -35,6 +34,227 @@ def interpolate(expr, V):
     Returns a new :class:`.Function` in the space :data:`V`.
     """
     return Function(V).interpolate(expr)
+
+
+class FunctionT(ufl.Coefficient):
+    """A function on a mesh topology."""
+
+    def __init__(self, function_space, val=None, name=None, dtype=valuetype):
+        """
+        :param function_space: the :class:`.FunctionSpace`, :class:`.VectorFunctionSpace`
+            or :class:`.MixedFunctionSpace` on which to build this :class:`Function`.
+            Alternatively, another :class:`Function` may be passed here and its function space
+            will be used to build this :class:`Function`.
+        :param val: NumPy array-like (or :class:`op2.Dat`) providing initial values (optional).
+        :param name: user-defined name for this :class:`Function` (optional).
+        :param dtype: optional data type for this :class:`Function`
+               (defaults to :data:`valuetype`).
+        """
+
+        if isinstance(function_space, FunctionT):
+            function_space = function_space.function_space()
+        elif isinstance(function_space, functionspace.FunctionSpaceBaseT):
+            pass
+        else:
+            raise NotImplementedError("Can't make a FunctionT defined on a "
+                                      + str(type(function_space)))
+        self._function_space = function_space
+
+        ufl.Coefficient.__init__(self, function_space.ufl_element())
+
+        self.uid = utils._new_uid()
+        self._name = name or 'function_%d' % self.uid
+
+        if isinstance(val, (op2.Dat, op2.DatView)):
+            self.dat = val
+        else:
+            self.dat = function_space.make_dat(val, dtype, self.name(), uid=self.uid)
+
+        # self._label = "a function"
+        # self._repr = None
+        # self._split = None
+
+    # def split(self):
+    #     """Extract any sub :class:`Function`\s defined on the component spaces
+    #     of this this :class:`Function`'s :class:`FunctionSpace`."""
+    #     if self._split is None:
+    #         self._split = tuple(Function(fs, dat, name="%s[%d]" % (self.name(), i))
+    #                             for i, (fs, dat) in
+    #                             enumerate(zip(self._function_space, self.dat)))
+    #     return self._split
+
+    # def sub(self, i):
+    #     """Extract the ith sub :class:`Function` of this :class:`Function`.
+
+    #     :arg i: the index to extract
+
+    #     See also :meth:`split`.
+
+    #     If the :class:`Function` is defined on a
+    #     :class:`.~VectorFunctionSpace`, this returns a proxy object
+    #     indexing the ith component of the space, suitable for use in
+    #     boundary condition application."""
+    #     if isinstance(self.function_space(), functionspace.VectorFunctionSpace):
+    #         fs = self.function_space().sub(i)
+    #         return Function(fs, val=op2.DatView(self.dat, i),
+    #                         name="view[%d](%s)" % (i, self.name()))
+    #     return self.split()[i]
+
+    @property
+    def cell_set(self):
+        """The :class:`pyop2.Set` of cells for the mesh on which this
+        :class:`Function` is defined."""
+        return self._function_space._mesh.cell_set
+
+    @property
+    def node_set(self):
+        """A :class:`pyop2.Set` containing the nodes of this
+        :class:`Function`. One or (for
+        :class:`.VectorFunctionSpace`\s) more degrees of freedom are
+        stored at each node.
+        """
+        return self._function_space.node_set
+
+    @property
+    def dof_dset(self):
+        """A :class:`pyop2.DataSet` containing the degrees of freedom of
+        this :class:`Function`."""
+        return self._function_space.dof_dset
+
+    def cell_node_map(self, bcs=None):
+        return self._function_space.cell_node_map(bcs)
+    cell_node_map.__doc__ = functionspace.FunctionSpaceT.cell_node_map.__doc__
+
+    def interior_facet_node_map(self, bcs=None):
+        return self._function_space.interior_facet_node_map(bcs)
+    interior_facet_node_map.__doc__ = functionspace.FunctionSpaceT.interior_facet_node_map.__doc__
+
+    def exterior_facet_node_map(self, bcs=None):
+        return self._function_space.exterior_facet_node_map(bcs)
+    exterior_facet_node_map.__doc__ = functionspace.FunctionSpaceT.exterior_facet_node_map.__doc__
+
+    def vector(self):
+        """Return a :class:`.Vector` wrapping the data in this :class:`Function`"""
+        return vector.Vector(self.dat)
+
+    def function_space(self):
+        """Return the :class:`.FunctionSpace`, :class:`.VectorFunctionSpace`
+            or :class:`.MixedFunctionSpace` on which this :class:`Function` is defined."""
+        return self._function_space
+
+    def name(self):
+        """Return the name of this :class:`Function`"""
+        return self._name
+
+    # def rename(self, name=None, label=None):
+    #     """Set the name and or label of this :class:`Function`
+
+    #     :arg name: The new name of the `Function` (if not `None`)
+    #     :arg label: The new label for the `Function` (if not `None`)
+    #     """
+    #     if name is not None:
+    #         self._name = name
+    #     if label is not None:
+    #         self._label = label
+
+    def __str__(self):
+        if self._name is not None:
+            return self._name
+        else:
+            return super(Function, self).__str__()
+
+    # def assign(self, expr, subset=None):
+    #     """Set the :class:`Function` value to the pointwise value of
+    #     expr. expr may only contain :class:`Function`\s on the same
+    #     :class:`.FunctionSpace` as the :class:`Function` being assigned to.
+
+    #     Similar functionality is available for the augmented assignment
+    #     operators `+=`, `-=`, `*=` and `/=`. For example, if `f` and `g` are
+    #     both Functions on the same :class:`FunctionSpace` then::
+
+    #       f += 2 * g
+
+    #     will add twice `g` to `f`.
+
+    #     If present, subset must be an :class:`pyop2.Subset` of
+    #     :attr:`node_set`. The expression will then only be assigned
+    #     to the nodes on that subset.
+    #     """
+
+    #     if isinstance(expr, Function) and \
+    #             expr._function_space == self._function_space:
+    #         expr.dat.copy(self.dat, subset=subset)
+    #         return self
+
+    #     from firedrake import assemble_expressions
+    #     assemble_expressions.evaluate_expression(
+    #         assemble_expressions.Assign(self, expr), subset)
+
+    #     return self
+
+    # def __iadd__(self, expr):
+
+    #     if np.isscalar(expr):
+    #         self.dat += expr
+    #         return self
+    #     if isinstance(expr, Function) and \
+    #             expr._function_space == self._function_space:
+    #         self.dat += expr.dat
+    #         return self
+
+    #     from firedrake import assemble_expressions
+    #     assemble_expressions.evaluate_expression(
+    #         assemble_expressions.IAdd(self, expr))
+
+    #     return self
+
+    # def __isub__(self, expr):
+
+    #     if np.isscalar(expr):
+    #         self.dat -= expr
+    #         return self
+    #     if isinstance(expr, Function) and \
+    #             expr._function_space == self._function_space:
+    #         self.dat -= expr.dat
+    #         return self
+
+    #     from firedrake import assemble_expressions
+    #     assemble_expressions.evaluate_expression(
+    #         assemble_expressions.ISub(self, expr))
+
+    #     return self
+
+    # def __imul__(self, expr):
+
+    #     if np.isscalar(expr):
+    #         self.dat *= expr
+    #         return self
+    #     if isinstance(expr, Function) and \
+    #             expr._function_space == self._function_space:
+    #         self.dat *= expr.dat
+    #         return self
+
+    #     from firedrake import assemble_expressions
+    #     assemble_expressions.evaluate_expression(
+    #         assemble_expressions.IMul(self, expr))
+
+    #     return self
+
+    # def __idiv__(self, expr):
+
+    #     if np.isscalar(expr):
+    #         self.dat /= expr
+    #         return self
+    #     if isinstance(expr, Function) and \
+    #             expr._function_space == self._function_space:
+    #         self.dat /= expr.dat
+    #         return self
+
+    #     from firedrake import assemble_expressions
+    #     assemble_expressions.evaluate_expression(
+    #         assemble_expressions.IDiv(self, expr))
+
+    #     return self
 
 
 class Function(ufl.Coefficient):
@@ -75,37 +295,27 @@ class Function(ufl.Coefficient):
             raise NotImplementedError("Can't make a Function defined on a "
                                       + str(type(function_space)))
 
-        if isinstance(val, topological.Function):
-            self.topological = val
+        if isinstance(val, FunctionT):
+            assert val.function_space() == self.function_space().t
+            self._t = val
         else:
-            self.topological = topological.Function(self._function_space.topological, val=val, name=name, dtype=dtype)
+            self._t = FunctionT(self._function_space.t, val=val, name=name, dtype=dtype)
 
-        # TODO!
-        ufl.Coefficient.__init__(self, self._function_space.ufl_element())
+        # TODO:
+        ufl.Coefficient.__init__(self, self.function_space().ufl_element())
 
-        # self._label = "a function"
-        # self.uid = utils._new_uid()
-        # self._name = name or 'function_%d' % self.uid
-
-        # if isinstance(val, (op2.Dat, op2.DatView)):
-        #     self.dat = val
-        # else:
-        #     self.dat = self._function_space.make_dat(val, dtype,
-        #                                              self._name, uid=self.uid)
+        self._label = "a function"
 
         # self._repr = None
         # self._split = None
 
-        # if cachetools:
-        #     # LRU cache for expressions assembled onto this function
-        #     self._expression_cache = cachetools.LRUCache(maxsize=50)
-        # else:
-        #     self._expression_cache = None
-        # if isinstance(function_space, Function):
-        #     self.assign(function_space)
+    @property
+    def t(self):
+        """The underlying coordinateless function."""
+        return self._t
 
     def __getattr__(self, name):
-        return getattr(self.topological, name)
+        return getattr(self.t, name)
 
     def split(self):
         """Extract any sub :class:`Function`\s defined on the component spaces
@@ -132,39 +342,6 @@ class Function(ufl.Coefficient):
             return Function(fs, val=op2.DatView(self.dat, i),
                             name="view[%d](%s)" % (i, self.name()))
         return self.split()[i]
-
-    # @property
-    # def cell_set(self):
-    #     """The :class:`pyop2.Set` of cells for the mesh on which this
-    #     :class:`Function` is defined."""
-    #     return self._function_space._mesh.cell_set
-
-    # @property
-    # def node_set(self):
-    #     """A :class:`pyop2.Set` containing the nodes of this
-    #     :class:`Function`. One or (for
-    #     :class:`.VectorFunctionSpace`\s) more degrees of freedom are
-    #     stored at each node.
-    #     """
-    #     return self._function_space.node_set
-
-    # @property
-    # def dof_dset(self):
-    #     """A :class:`pyop2.DataSet` containing the degrees of freedom of
-    #     this :class:`Function`."""
-    #     return self._function_space.dof_dset
-
-    # def cell_node_map(self, bcs=None):
-    #     return self._function_space.cell_node_map(bcs)
-    # cell_node_map.__doc__ = functionspace.FunctionSpace.cell_node_map.__doc__
-
-    # def interior_facet_node_map(self, bcs=None):
-    #     return self._function_space.interior_facet_node_map(bcs)
-    # interior_facet_node_map.__doc__ = functionspace.FunctionSpace.interior_facet_node_map.__doc__
-
-    # def exterior_facet_node_map(self, bcs=None):
-    #     return self._function_space.exterior_facet_node_map(bcs)
-    # exterior_facet_node_map.__doc__ = functionspace.FunctionSpace.exterior_facet_node_map.__doc__
 
     def project(self, b, *args, **kwargs):
         """Project ``b`` onto ``self``. ``b`` must be a :class:`Function` or an

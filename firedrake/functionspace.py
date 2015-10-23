@@ -464,6 +464,8 @@ class FunctionSpace(FunctionSpaceBase):
         mesh.init()
         if isinstance(family, topological.FunctionSpace):
             topological_fs = super(FunctionSpace, self).__init__(mesh, family)
+        elif isinstance(family, ufl.FiniteElementBase):
+            topological_fs = topological.FunctionSpace(mesh.topological, family, name=name)
         else:
             element = ufl.FiniteElement(family, domain=mesh.topological.ufl_cell(), degree=degree)
             topological_fs = topological.FunctionSpace(mesh.topological, element, name=name)

@@ -6,14 +6,98 @@ from firedrake import op2
 import h5py
 
 
-__all__ = ["CheckpointFile", "FileMode"]
+__all__ = ["Checkpoint", "DumbCheckpoint", "READ", "CREATE", "UPDATE"]
 
 
-"""Available modes for opening checkpoint files"""
+class _Mode(object):
+    """Mode used for opening files"""
+
+    def __init__(self, h5py_mode, petsc_mode):
+        self.hmode = h5py_mode
+        self.pmode = petsc_mode
+
 FileMode = PETSc.Viewer.Mode
 
+"""Open a checkpoint file for reading.  Errors if file does not exist."""
+READ = _Mode("r", FileMode.READ)
 
-class CheckpointFile(object):
+"""Create a checkpoint file.  Truncates the file if it exists."""
+CREATE = _Mode("w", FileMode.WRITE)
+
+"""Open a checkpoint file for updating.  Creates the file if it does
+not exist, otherwise gives READ and WRITE access."""
+UPDATE = _Mode("a", FileMode.APPEND)
+
+
+class DumbCheckpoint(object):
+
+    """A very dumb checkpoint object.
+
+    This checkpoint object is capable of writing :class:`~.Function`\s
+    to disk in parallel (using HDF5) and reloading them on the same
+    number of processes and a :class:`~.Mesh` constructed identically.
+
+    :arg name: the name of the checkpoint file.
+    :arg mode: the access mode (one of :data:`~.READ`,
+         :data:`~.CREATE`, or :data:`~.UPDATE`)
+    :arg comm: (optional) communicator the writes should be collective
+         over.
+
+    This object can be used in a context manager (in which case it
+    closes the file when the scope is exited).
+
+    """
+    def __init__(self, name, mode=UPDATE, comm=None):
+        self.comm = comm or op2.MPI.comm
+        # Read (or write) metadata on rank 0.
+        if self.comm.rank == 0:
+            with h5py.File(name, mode=mode.hmode) as f:
+                group = f.require_group("/metadata")
+                dset = group.get("numprocs", None)
+                if dset is None:
+                    group["numprocs"] = self.comm.size
+                elif dset.value != self.comm.size:
+                    nprocs = self.comm.bcast(dset.value, root=0)
+        else:
+            nprocs = self.comm.bcast(None, root=0)
+
+        # Verify
+        if nprocs != self.comm.size:
+            raise ValueError("Process mismatch: written on %d, have %d" %
+                             (nprocs, self.comm.size))
+        # Now switch to UPDATE if we were asked to CREATE the file
+        # (we've already created it above, and CREATE truncates)
+        if mode is CREATE:
+            mode = UPDATE
+        self.vwr = PETSc.ViewerHDF5().create(name, mode=mode.pmode)
+
+    def close(self):
+        """Close the checkpoint file (flushing any pending writes)"""
+        if hasattr(self, "vwr"):
+            self.vwr.destroy()
+
+    def store(self, function, name=None):
+        with function.dat.vec_ro as v:
+            self.vwr.pushGroup("/fields")
+            v.setName(name or function.name())
+            v.view(self.vwr)
+            self.vwr.popGroup()
+
+    def load(self, function, name=None):
+        with function.dat.vec as v:
+            self.vwr.pushGroup("/fields")
+            v.setName(name or function.name())
+            v.load(self.vwr)
+            self.vwr.popGroup()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
+class Checkpoint(object):
 
     """Open a file that can be used for checkpointing.
 
@@ -69,11 +153,8 @@ class CheckpointFile(object):
         assert self._stored_mesh, "Must call store_mesh first"
         self.vwr.pushGroup("/fields")
         with function.dat.vec_ro as v:
-            nat = v.duplicate()
-            nat.setName(function.name())
-            self._dm.globalToNaturalBegin(v, nat)
-            self._dm.globalToNaturalEnd(v, nat)
-            nat.view(self.vwr)
+            v.setName(function.name())
+            v.view(self.vwr)
         self.vwr.popGroup()
 
     def close(self):
@@ -87,7 +168,7 @@ class CheckpointFile(object):
         self.open_vwr(FileMode.READ)
         dm = PETSc.DMPlex().create()
         dm.load(self.vwr)
-        return mesh.Mesh(dm, reorder=True)
+        return mesh.Mesh(dm, reorder=False)
 
     def load_function(self, f):
         assert self.vwr is not None

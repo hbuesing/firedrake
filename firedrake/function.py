@@ -314,6 +314,8 @@ class Function(ufl.Coefficient):
             self._expression_cache = cachetools.LRUCache(maxsize=50)
         else:
             self._expression_cache = None
+        if isinstance(function_space, Function):
+            self.assign(function_space)
 
     @property
     def t(self):

@@ -198,7 +198,7 @@ class FunctionSpaceBase(object):
     def dof_dset(self):
         """A :class:`pyop2.DataSet` containing the degrees of freedom of
         this :class:`.FunctionSpace`."""
-        return op2.DataSet(self.node_set, self.dim, name="%s_nodes_dset" % self.name)
+        return op2.DataSet(self.node_set, self.shape or 1, name="%s_nodes_dset" % self.name)
 
     def make_dat(self, val=None, valuetype=None, name=None, uid=None):
         """Return a newly allocated :class:`pyop2.Dat` defined on the
@@ -561,28 +561,21 @@ class WithGeo(object):
     def __len__(self):
         return len(self._t)
 
-    @utils.cached_property
-    def _spaces(self):
+    def split(self):
         spaces = []
-        for subspace in self._t:
-            if subspace is self._t:
-                spaces.append(self)
-            else:
-                spaces.append(WithGeo(subspace, self._mesh))
+        for subspace in self._t.split():
+            spaces.append(WithGeo(subspace, self._mesh))
         return spaces
 
-    def split(self):
-        return self._spaces
-
     def __iter__(self):
-        for subspace in self._spaces:
-            yield subspace
+        for subspace in self._t:
+            yield WithGeo(subspace, self._mesh)
 
     def __getitem__(self, i):
-        return self._spaces[i]
+        return WithGeo(self._t[i], self._mesh)
 
     def sub(self, i):
-        return self._spaces[i]
+        return WithGeo(self._t.sub(i), self._mesh)
 
     def __mul__(self, other):
         """Create a :class:`.MixedFunctionSpace` composed of this
@@ -690,12 +683,12 @@ class VectorFunctionSpace(FunctionSpaceBase):
             self = WithGeo(self, mesh)
         return self
 
-    # def sub(self, i):
-    #     """Return an :class:`IndexedVFS` for the requested component.
+    def sub(self, i):
+        """Return an :class:`IndexedVFS` for the requested component.
 
-    #     This can be used to apply :class:`~.DirichletBC`\s to components
-    #     of a :class:`VectorFunctionSpace`."""
-    #     return IndexedVFS(self, i)
+        This can be used to apply :class:`~.DirichletBC`\s to components
+        of a :class:`VectorFunctionSpace`."""
+        return IndexedVFS(self, i)
 
 
 class TensorFunctionSpace(FunctionSpaceBase):
@@ -961,18 +954,18 @@ class IndexedVFS(FunctionSpaceBase):
 
     Users should not instantiate this by hand.  Instead call
     :meth:`VectorFunctionSpace.sub`."""
-    def __init__(self, parent, index):
+    def __new__(cls, parent, index):
         assert isinstance(parent, VectorFunctionSpace), "Only valid for VFS"
         assert 0 <= index < parent.dim, \
             "Invalid index %d, not in [0, %d)" % (index, parent.dim)
         if index > 2:
             raise NotImplementedError("Indexing VFS not implemented for index > 2")
         element = parent._ufl_element.sub_elements()[0]
+        self = super(IndexedVFS, cls).__new__(cls, parent.mesh(), element)
         self._parent = parent
-        super(IndexedVFS, self).__init__(parent.mesh(),
-                                         element)
         self._index = index
         self._fs = parent
+        return self
 
     @property
     def index(self):
@@ -988,9 +981,10 @@ class IndexedVFS(FunctionSpaceBase):
     # def _cache_key(self, parent, index):
     #     return parent, index
 
-    @utils.cached_property
-    def node_set(self):
-        return self._parent.node_set
+    # TODO?
+    # @utils.cached_property
+    # def node_set(self):
+    #     return self._parent.node_set
 
 
 class IndexedFunctionSpace(FunctionSpaceBase):

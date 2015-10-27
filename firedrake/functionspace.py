@@ -6,14 +6,12 @@ import weakref
 import coffee.base as ast
 
 from pyop2 import op2
-# from pyop2.caching import ObjectCached
-from pyop2.utils import flatten, as_tuple
+from pyop2.utils import flatten
 
 from firedrake.petsc import PETSc
 from firedrake import dmplex
 import firedrake.extrusion_utils as eutils
 from firedrake import fiat_utils
-import firedrake.mesh as mesh_t
 from firedrake import halo
 from firedrake import utils
 
@@ -23,8 +21,16 @@ __all__ = ['FunctionSpace', 'VectorFunctionSpace',
            'IndexedFunctionSpace']
 
 
-class FunctionSpaceBaseT(object):
-    """Base class for coordinateless function spaces.
+class FunctionSpaceMeta(type):
+    def __instancecheck__(self, other):
+        if isinstance(other, WithGeo):
+            other = other.t
+        return super(FunctionSpaceMeta, self).__instancecheck__(other)
+
+
+class FunctionSpaceBase(object):
+    """Base class for :class:`.FunctionSpace`, :class:`.VectorFunctionSpace` and
+    :class:`.MixedFunctionSpace`.
 
     .. note ::
 
@@ -32,7 +38,9 @@ class FunctionSpaceBaseT(object):
         derived types.
     """
 
-    def __init__(self, mesh, element, name=None, shape=()):
+    __metaclass__ = FunctionSpaceMeta
+
+    def __new__(cls, mesh, element, name=None, shape=()):
         """
         :param mesh: :class:`MeshT` to build this space on
         :param element: :class:`ufl.FiniteElementBase` to build this space from
@@ -42,6 +50,7 @@ class FunctionSpaceBaseT(object):
 
         assert mesh.ufl_cell() == element.cell()
 
+        self = super(FunctionSpaceBase, cls).__new__(cls)
         self._mesh = mesh
         self._ufl_element = element
         self.name = name
@@ -139,6 +148,8 @@ class FunctionSpaceBaseT(object):
         self._cell_node_map_cache = {}
         self._exterior_facet_map_cache = {}
         self._interior_facet_map_cache = {}
+
+        return self
 
     @property
     def index(self):
@@ -319,10 +330,9 @@ class FunctionSpaceBaseT(object):
         else:
             for bc in bcs:
                 fs = bc.function_space()
-                # TODO:
-                # if isinstance(fs, IndexedVFS):
-                #     fs = fs._parent
-                if fs != self:
+                if isinstance(fs, IndexedVFS):
+                    fs = fs._parent
+                if fs.t != self:  # TODO!
                     raise RuntimeError("DirichletBC defined on a different FunctionSpace!")
             # Ensure bcs is a tuple in a canonical order for the hash key.
             lbcs = tuple(sorted(bcs, key=lambda bc: bc.__hash__()))
@@ -518,70 +528,102 @@ class FunctionSpaceBaseT(object):
     #     return MixedFunctionSpace((self, other))
 
 
-class FunctionSpaceBase(object):
-    """Base class for :class:`.FunctionSpace`, :class:`.VectorFunctionSpace` and
-    :class:`.MixedFunctionSpace`.
+class WithGeo(object):
+    def __init__(self, topological_function_space, mesh_geometry):
+        assert mesh_geometry.t is topological_function_space.mesh()
 
-    .. note ::
+        self._t = topological_function_space
+        self._mesh = mesh_geometry
 
-        Users should not directly create objects of this class, but one of its
-        derived types.
-    """
+        self._ufl_element = self._t.ufl_element().reconstruct(domain=self._mesh)
 
-    def __init__(self, mesh, topological):
-        """
-        :param mesh: :class:`Mesh` to provide the mesh geometry
-        :param topological: :class:`FunctionSpaceBaseT` coordinateless function space
-        """
-
-        assert mesh.t is topological.mesh()
-
-        self._mesh = mesh
-        self._ufl_element = topological.ufl_element().reconstruct(domain=mesh)
-        self._t = topological
+        if hasattr(self._t, '_parent'):
+            self._parent = WithGeo(self._t._parent, self._mesh)
 
         # # Tell the DM about the layout of the global vector
         # from firedrake.function import Function
         # with Function(self).dat.vec_ro as v:
         #     self._dm.setGlobalVector(v.duplicate())
 
+    def mesh(self):
+        return self._mesh
+
     def ufl_element(self):
-        """The :class:`ufl.FiniteElement` used to construct this
-        :class:`FunctionSpace`."""
         return self._ufl_element
 
-    def mesh(self):
-        """The :class:`Mesh` used to construct this :class:`.FunctionSpace`."""
-        return self._mesh
+    def __eq__(self, other):
+        return self._t == other._t and self._mesh is other._mesh
+
+    def __len__(self):
+        return len(self._t)
+
+    @utils.cached_property
+    def _spaces(self):
+        spaces = []
+        for subspace in self._t:
+            if subspace is self._t:
+                spaces.append(self)
+            else:
+                spaces.append(WithGeo(subspace, self._mesh))
+        return spaces
+
+    def split(self):
+        return self._spaces
+
+    def __iter__(self):
+        for subspace in self._spaces:
+            yield subspace
+
+    def __getitem__(self, i):
+        return self._spaces[i]
+
+    def sub(self, i):
+        return self._spaces[i]
+
+    def __mul__(self, other):
+        """Create a :class:`.MixedFunctionSpace` composed of this
+        :class:`.FunctionSpace` and other"""
+        return MixedFunctionSpace((self, other))
 
     @property
     def t(self):
-        """The underlying function space without a mesh geometry."""
         return self._t
 
-    def __len__(self):
-        return 1
-
-    def __iter__(self):
-        yield self
-
-    def __getitem__(self, i):
-        """Return ``self`` if ``i`` is 0 or raise an exception."""
-        if i != 0:
-            raise IndexError("Only index 0 supported on a FunctionSpace")
-        return self
-
-    # def __mul__(self, other):
-    #     """Create a :class:`.MixedFunctionSpace` composed of this
-    #     :class:`.FunctionSpace` and other"""
-    #     return MixedFunctionSpace((self, other))
-
     def __getattr__(self, name):
-        return getattr(self.t, name)
+        return getattr(self._t, name)
 
 
-class FunctionSpaceT(FunctionSpaceBaseT):
-    def __init__(self, mesh, family, degree=None, name=None, vfamily=None, vdegree=None):
+class FunctionSpace(FunctionSpaceBase):
+    def __new__(cls, mesh, family, degree=None, name=None, vfamily=None, vdegree=None):
+        """Create a function space
+
+        :arg mesh: :class:`.Mesh` to build the function space on
+        :arg family: string describing function space family, or an
+            :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`
+        :arg degree: degree of the function space
+        :arg name: (optional) name of the function space
+        :arg vfamily: family of function space in vertical dimension
+            (:class:`.ExtrudedMesh`\es only)
+        :arg vdegree: degree of function space in vertical dimension
+            (:class:`.ExtrudedMesh`\es only)
+
+        If the mesh is an :class:`.ExtrudedMesh`, and the ``family``
+        argument is a
+        :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`,
+        ``degree``, ``vfamily`` and ``vdegree`` are ignored, since the
+        ``family`` provides all necessary information, otherwise a
+        :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`
+        is built from the (``family``, ``degree``) and (``vfamily``,
+        ``vdegree``) pair.  If the ``vfamily`` and ``vdegree`` are not
+        provided, the vertical element defaults to the same as the
+        (``family``, ``degree``) pair.
+
+        If the mesh is not an :class:`.ExtrudedMesh`, the ``family`` must be
+        a string describing the finite element family to use, and the
+        ``degree`` must be provided, ``vfamily`` and ``vdegree`` are ignored in
+        this case.
+
+        """
         mesh.init()
 
         # Two choices:
@@ -593,10 +635,10 @@ class FunctionSpaceT(FunctionSpaceBaseT):
             element = family
         else:
             # First case...
-            if isinstance(mesh.ufl_cell(), ufl.OuterProductCell) and vfamily is not None and vdegree is not None:
+            if isinstance(mesh.t.ufl_cell(), ufl.OuterProductCell) and vfamily is not None and vdegree is not None:
                 # If OuterProductCell, make the OuterProductElement
                 la = ufl.FiniteElement(family,
-                                       domain=mesh._base_mesh.ufl_cell(),
+                                       domain=mesh.t._base_mesh.ufl_cell(),
                                        degree=degree)
                 # If second element was passed in, use it
                 lb = ufl.FiniteElement(vfamily,
@@ -607,62 +649,28 @@ class FunctionSpaceT(FunctionSpaceBaseT):
             else:
                 # Otherwise, just make the element
                 element = ufl.FiniteElement(family,
-                                            domain=mesh.ufl_cell(),
+                                            domain=mesh.t.ufl_cell(),
                                             degree=degree)
-        super(FunctionSpaceT, self).__init__(mesh, element, name=name)
+        self = super(FunctionSpace, cls).__new__(cls, mesh.t, element, name=name)
+        if mesh is not mesh.t:
+            self = WithGeo(self, mesh)
+        return self
 
 
-class FunctionSpace(FunctionSpaceBase):
-    """Create a function space
+class VectorFunctionSpace(FunctionSpaceBase):
+    """A vector finite element :class:`FunctionSpace`."""
 
-    :arg mesh: :class:`.Mesh` to build the function space on
-    :arg family: string describing function space family, or an
-        :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`
-    :arg degree: degree of the function space
-    :arg name: (optional) name of the function space
-    :arg vfamily: family of function space in vertical dimension
-        (:class:`.ExtrudedMesh`\es only)
-    :arg vdegree: degree of function space in vertical dimension
-        (:class:`.ExtrudedMesh`\es only)
-
-    If the mesh is an :class:`.ExtrudedMesh`, and the ``family``
-    argument is a
-    :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`,
-    ``degree``, ``vfamily`` and ``vdegree`` are ignored, since the
-    ``family`` provides all necessary information, otherwise a
-    :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`
-    is built from the (``family``, ``degree``) and (``vfamily``,
-    ``vdegree``) pair.  If the ``vfamily`` and ``vdegree`` are not
-    provided, the vertical element defaults to the same as the
-    (``family``, ``degree``) pair.
-
-    If the mesh is not an :class:`.ExtrudedMesh`, the ``family`` must be
-    a string describing the finite element family to use, and the
-    ``degree`` must be provided, ``vfamily`` and ``vdegree`` are ignored in
-    this case.
-
-    """
-
-    def __init__(self, mesh, family, degree=None, name=None, vfamily=None, vdegree=None):
-        mesh.init()
-        if isinstance(family, FunctionSpaceT):
-            topological = family
-        else:
-            topological = FunctionSpaceT(mesh.t, family, degree=degree, name=name,
-                                         vfamily=vfamily, vdegree=vdegree)
-        super(FunctionSpace, self).__init__(mesh, topological)
-
-
-class VectorFunctionSpaceT(FunctionSpaceBaseT):
-    def __init__(self, mesh, family, degree=None, dim=None, name=None, vfamily=None, vdegree=None):
-        assert dim is not None
+    def __new__(cls, mesh, family, degree=None, dim=None, name=None, vfamily=None, vdegree=None):
         mesh.init()
 
-        if isinstance(mesh.ufl_cell(), ufl.OuterProductCell) and isinstance(family, ufl.OuterProductElement):
+        # VectorFunctionSpace dimension defaults to the geometric dimension of the mesh.
+        dim = dim or mesh.ufl_cell().geometric_dimension()
+
+        if isinstance(mesh.t.ufl_cell(), ufl.OuterProductCell) and isinstance(family, ufl.OuterProductElement):
             element = ufl.OuterProductVectorElement(family, dim=dim)
-        elif isinstance(mesh.ufl_cell(), ufl.OuterProductCell) and vfamily is not None and vdegree is not None:
+        elif isinstance(mesh.t.ufl_cell(), ufl.OuterProductCell) and vfamily is not None and vdegree is not None:
             la = ufl.FiniteElement(family,
-                                   domain=mesh._base_mesh.ufl_cell(),
+                                   domain=mesh.t._base_mesh.ufl_cell(),
                                    degree=degree)
             lb = ufl.FiniteElement(vfamily,
                                    domain=ufl.interval,
@@ -670,33 +678,13 @@ class VectorFunctionSpaceT(FunctionSpaceBaseT):
             element = ufl.OuterProductVectorElement(la, lb, dim=dim)
         else:
             element = ufl.VectorElement(family,
-                                        domain=mesh.ufl_cell(),
+                                        domain=mesh.t.ufl_cell(),
                                         degree=degree, dim=dim)
 
-        super(VectorFunctionSpaceT, self).__init__(mesh, element, name=name, shape=(dim,))
-
-    # def sub(self, i):
-    #     """Return an :class:`IndexedVFS` for the requested component.
-
-    #     This can be used to apply :class:`~.DirichletBC`\s to components
-    #     of a :class:`VectorFunctionSpace`."""
-    #     return IndexedVFS(self, i)
-
-
-class VectorFunctionSpace(FunctionSpaceBase):
-    """A vector finite element :class:`FunctionSpace`."""
-
-    def __init__(self, mesh, family, degree=None, dim=None, name=None, vfamily=None, vdegree=None):
-        mesh.init()
-        if isinstance(family, VectorFunctionSpaceT):
-            topological = family
-        else:
-            # VectorFunctionSpace dimension defaults to the geometric dimension of the mesh.
-            dim = dim or mesh.ufl_cell().geometric_dimension()
-            topological = VectorFunctionSpaceT(mesh.t, family, degree=degree, dim=dim,
-                                               name=name, vfamily=vfamily, vdegree=vdegree)
-
-        super(VectorFunctionSpace, self).__init__(mesh, topological)
+        self = super(VectorFunctionSpace, cls).__new__(cls, mesh.t, element, name=name, shape=(dim,))
+        if mesh is not mesh.t:
+            self = WithGeo(self, mesh)
+        return self
 
     # def sub(self, i):
     #     """Return an :class:`IndexedVFS` for the requested component.
@@ -712,8 +700,8 @@ class TensorFunctionSpace(FunctionSpaceBase):
     """
     def __init__(self, mesh, family, degree=None, shape=None, symmetry=None, name=None,
                  vfamily=None, vdegree=None):
-        if self._initialized:
-            return
+        # if self._initialized:
+        #     return
         # The argument list is a joke at this point: if uninitialised,
         # the real arguments are like that of _cache_key. We need the
         # argument list above though:
@@ -723,30 +711,30 @@ class TensorFunctionSpace(FunctionSpaceBase):
         element = family.reconstruct(domain=mesh.ufl_domain())
         super(TensorFunctionSpace, self).__init__(mesh, element, name,
                                                   dim=shape, rank=len(shape))
-        self._initialized = True
+        # self._initialized = True
 
-    @classmethod
-    def _process_args(cls, mesh, family, degree, shape=None, symmetry=None,
-                      vfamily=None, vdegree=None, **kwargs):
-        # TensorFunctionSpace shape defaults to the (gdim, gdim)
-        shape = shape or (mesh.ufl_cell().geometric_dimension(),) * 2
+    # @classmethod
+    # def _process_args(cls, mesh, family, degree, shape=None, symmetry=None,
+    #                   vfamily=None, vdegree=None, **kwargs):
+    #     # TensorFunctionSpace shape defaults to the (gdim, gdim)
+    #     shape = shape or (mesh.ufl_cell().geometric_dimension(),) * 2
 
-        if isinstance(mesh, mesh_t.ExtrudedMesh):
-            raise NotImplementedError("TFS on extruded meshes not implemented")
-        else:
-            element = ufl.TensorElement(family, domain=mesh.ufl_cell(),
-                                        degree=degree, shape=shape,
-                                        symmetry=symmetry)
-        return (mesh, mesh, element), dict(kwargs, shape=shape)
+    #     if isinstance(mesh, mesh_t.ExtrudedMesh):
+    #         raise NotImplementedError("TFS on extruded meshes not implemented")
+    #     else:
+    #         element = ufl.TensorElement(family, domain=mesh.ufl_cell(),
+    #                                     degree=degree, shape=shape,
+    #                                     symmetry=symmetry)
+    #     return (mesh, mesh, element), dict(kwargs, shape=shape)
 
-    @classmethod
-    def _cache_key(cls, mesh, element, name=None, **kwargs):
-        return element, name
+    # @classmethod
+    # def _cache_key(cls, mesh, element, name=None, **kwargs):
+    #     return element, name
 
-    def __getitem__(self, i):
-        """Return self if ``i`` is 0, otherwise raise an error."""
-        assert i == 0, "Can only extract subspace 0 from %r" % self
-        return self
+    # def __getitem__(self, i):
+    #     """Return self if ``i`` is 0, otherwise raise an error."""
+    #     assert i == 0, "Can only extract subspace 0 from %r" % self
+    #     return self
 
 
 class MixedFunctionSpace(FunctionSpaceBase):
@@ -768,20 +756,21 @@ class MixedFunctionSpace(FunctionSpaceBase):
             ME  = MixedFunctionSpace([P2v, P1, P1, P1])
         """
 
-        if self._initialized:
-            return
+        # if self._initialized:
+        #     return
         self._spaces = [IndexedFunctionSpace(s, i, self)
                         for i, s in enumerate(flatten(spaces))]
         self._mesh = self._spaces[0].mesh()
         self._ufl_element = ufl.MixedElement(*[fs.ufl_element() for fs in self._spaces])
         self.name = name or '_'.join(str(s.name) for s in self._spaces)
-        self.rank = 1
-        self._index = None
-        self._initialized = True
+        # self.rank = 1
+        # self._index = None
+        # self._initialized = True
         dm = PETSc.DMShell().create()
-        from firedrake.function import Function
-        with Function(self).dat.vec_ro as v:
-            dm.setGlobalVector(v.duplicate())
+        # TODO:
+        # from firedrake.function import Function
+        # with Function(self).dat.vec_ro as v:
+        #     dm.setGlobalVector(v.duplicate())
         dm.setAttr('__fs__', weakref.ref(self))
         dm.setCreateFieldDecomposition(self.create_field_decomp)
         dm.setCreateSubDM(self.create_subdm)
@@ -816,16 +805,16 @@ class MixedFunctionSpace(FunctionSpaceBase):
         dms = [V._dm for V in W]
         return names, W._ises, dms
 
-    @classmethod
-    def _process_args(cls, *args, **kwargs):
-        """Convert list of spaces to tuple (to make it hashable)"""
-        mesh = args[0][0].mesh()
-        pargs = tuple(as_tuple(arg) for arg in args)
-        return (mesh, ) + pargs, kwargs
+    # @classmethod
+    # def _process_args(cls, *args, **kwargs):
+    #     """Convert list of spaces to tuple (to make it hashable)"""
+    #     mesh = args[0][0].mesh()
+    #     pargs = tuple(as_tuple(arg) for arg in args)
+    #     return (mesh, ) + pargs, kwargs
 
-    @classmethod
-    def _cache_key(cls, *args, **kwargs):
-        return args
+    # @classmethod
+    # def _cache_key(cls, *args, **kwargs):
+    #     return args
 
     def split(self):
         """The list of :class:`FunctionSpace`\s of which this
@@ -856,19 +845,19 @@ class MixedFunctionSpace(FunctionSpaceBase):
         for s in self._spaces:
             yield s
 
-    @property
-    def dim(self):
-        """Return a tuple of :attr:`FunctionSpace.dim`\s of the
-        :class:`FunctionSpace`\s of which this :class:`MixedFunctionSpace` is
-        composed."""
-        return tuple(fs.dim for fs in self._spaces)
+    # @property
+    # def dim(self):
+    #     """Return a tuple of :attr:`FunctionSpace.dim`\s of the
+    #     :class:`FunctionSpace`\s of which this :class:`MixedFunctionSpace` is
+    #     composed."""
+    #     return tuple(fs.dim for fs in self._spaces)
 
-    @property
-    def cdim(self):
-        """Return the sum of the :attr:`FunctionSpace.dim`\s of the
-        :class:`FunctionSpace`\s this :class:`MixedFunctionSpace` is
-        composed of."""
-        return sum(fs.dim for fs in self._spaces)
+    # @property
+    # def cdim(self):
+    #     """Return the sum of the :attr:`FunctionSpace.dim`\s of the
+    #     :class:`FunctionSpace`\s this :class:`MixedFunctionSpace` is
+    #     composed of."""
+    #     return sum(fs.dim for fs in self._spaces)
 
     @property
     def node_count(self):
@@ -967,6 +956,13 @@ class MixedFunctionSpace(FunctionSpaceBase):
                             for i, (s, v) in enumerate(zip(self._spaces, val)))
 
 
+# TODO!
+# def MixedFunctionSpace(spaces, name=None):
+#     """A mixed finite element :class:`FunctionSpace`."""
+#     topological_spaces = [space.t for space in spaces]
+#     return WithGeo(MixedFunctionSpace(topological_spaces, name=name), spaces[0].mesh())
+
+
 class IndexedVFS(FunctionSpaceBase):
     """A helper class used to keep track of indexing of a
     :class:`VectorFunctionSpace`.
@@ -986,13 +982,19 @@ class IndexedVFS(FunctionSpaceBase):
         self._index = index
         self._fs = parent
 
-    @classmethod
-    def _process_args(self, parent, index):
-        return (parent.mesh(), parent, index), {}
+    @property
+    def index(self):
+        """Position of this :class:`FunctionSpaceBase` in the
+        :class:`.MixedFunctionSpace` it was extracted from."""
+        return self._index
 
-    @classmethod
-    def _cache_key(self, parent, index):
-        return parent, index
+    # @classmethod
+    # def _process_args(self, parent, index):
+    #     return (parent.mesh(), parent, index), {}
+
+    # @classmethod
+    # def _cache_key(self, parent, index):
+    #     return parent, index
 
     @utils.cached_property
     def node_set(self):
@@ -1009,8 +1011,8 @@ class IndexedFunctionSpace(FunctionSpaceBase):
         :param index: the position in the parent :class:`MixedFunctionSpace`
         :param parent: the parent :class:`MixedFunctionSpace`
         """
-        if self._initialized:
-            return
+        # if self._initialized:
+        #     return
         # If the function space was extracted from a mixed function space,
         # extract the underlying component space
         if isinstance(fs, IndexedFunctionSpace):
@@ -1022,21 +1024,27 @@ class IndexedFunctionSpace(FunctionSpaceBase):
         self._fs = fs
         self._index = index
         self._parent = parent
-        self._initialized = True
+        # self._initialized = True
 
-    @classmethod
-    def _process_args(cls, fs, index, parent, **kwargs):
-        return (fs.mesh(), fs, index, parent), kwargs
+    @property
+    def index(self):
+        """Position of this :class:`FunctionSpaceBase` in the
+        :class:`.MixedFunctionSpace` it was extracted from."""
+        return self._index
 
-    @classmethod
-    def _cache_key(cls, *args, **kwargs):
-        return args
+    # @classmethod
+    # def _process_args(cls, fs, index, parent, **kwargs):
+    #     return (fs.mesh(), fs, index, parent), kwargs
+
+    # @classmethod
+    # def _cache_key(cls, *args, **kwargs):
+    #     return args
 
     def __getattr__(self, name):
         return getattr(self._fs, name)
 
     def __repr__(self):
-        return "<IndexFunctionSpace: %r at %d>" % (FunctionSpaceBase.__repr__(self._fs), self._index)
+        return "<IndexedFunctionSpace: %r at %d>" % (FunctionSpaceBase.__repr__(self._fs), self._index)
 
     @property
     def node_set(self):

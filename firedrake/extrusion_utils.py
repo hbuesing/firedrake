@@ -222,7 +222,7 @@ def make_extruded_coords(extruded_mesh, layer_height,
 
     # Dat to hold layer number
     import firedrake.functionspace as fs
-    layer_fs = fs.FunctionSpaceT(extruded_mesh.t, 'DG', 0)
+    layer_fs = fs.FunctionSpace(extruded_mesh.t, 'DG', 0)
     layers = extruded_mesh.layers
     layer = op2.Dat(layer_fs.dof_dset,
                     np.repeat(np.arange(layers-1, dtype=np.int32),

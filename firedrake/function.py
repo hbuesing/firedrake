@@ -53,7 +53,7 @@ class FunctionT(ufl.Coefficient):
 
         if isinstance(function_space, FunctionT):
             function_space = function_space.function_space()
-        elif isinstance(function_space, functionspace.FunctionSpaceBaseT):
+        elif isinstance(function_space, functionspace.FunctionSpaceBase):
             pass
         else:
             raise NotImplementedError("Can't make a FunctionT defined on a "
@@ -72,33 +72,33 @@ class FunctionT(ufl.Coefficient):
 
         # self._label = "a function"
         # self._repr = None
-        # self._split = None
+        self._split = None
 
-    # def split(self):
-    #     """Extract any sub :class:`Function`\s defined on the component spaces
-    #     of this this :class:`Function`'s :class:`FunctionSpace`."""
-    #     if self._split is None:
-    #         self._split = tuple(Function(fs, dat, name="%s[%d]" % (self.name(), i))
-    #                             for i, (fs, dat) in
-    #                             enumerate(zip(self._function_space, self.dat)))
-    #     return self._split
+    def split(self):
+        """Extract any sub :class:`Function`\s defined on the component spaces
+        of this this :class:`Function`'s :class:`FunctionSpace`."""
+        if self._split is None:
+            self._split = tuple(FunctionT(fs, dat, name="%s[%d]" % (self.name(), i))
+                                for i, (fs, dat) in
+                                enumerate(zip(self._function_space, self.dat)))
+        return self._split
 
-    # def sub(self, i):
-    #     """Extract the ith sub :class:`Function` of this :class:`Function`.
+    def sub(self, i):
+        """Extract the ith sub :class:`Function` of this :class:`Function`.
 
-    #     :arg i: the index to extract
+        :arg i: the index to extract
 
-    #     See also :meth:`split`.
+        See also :meth:`split`.
 
-    #     If the :class:`Function` is defined on a
-    #     :class:`.~VectorFunctionSpace`, this returns a proxy object
-    #     indexing the ith component of the space, suitable for use in
-    #     boundary condition application."""
-    #     if isinstance(self.function_space(), functionspace.VectorFunctionSpace):
-    #         fs = self.function_space().sub(i)
-    #         return Function(fs, val=op2.DatView(self.dat, i),
-    #                         name="view[%d](%s)" % (i, self.name()))
-    #     return self.split()[i]
+        If the :class:`Function` is defined on a
+        :class:`.~VectorFunctionSpace`, this returns a proxy object
+        indexing the ith component of the space, suitable for use in
+        boundary condition application."""
+        if isinstance(self.function_space(), functionspace.VectorFunctionSpace):
+            fs = self.function_space().sub(i)
+            return FunctionT(fs, val=op2.DatView(self.dat, i),
+                             name="view[%d](%s)" % (i, self.name()))
+        return self.split()[i]
 
     @property
     def cell_set(self):
@@ -123,15 +123,15 @@ class FunctionT(ufl.Coefficient):
 
     def cell_node_map(self, bcs=None):
         return self._function_space.cell_node_map(bcs)
-    cell_node_map.__doc__ = functionspace.FunctionSpaceT.cell_node_map.__doc__
+    cell_node_map.__doc__ = functionspace.FunctionSpace.cell_node_map.__doc__
 
     def interior_facet_node_map(self, bcs=None):
         return self._function_space.interior_facet_node_map(bcs)
-    interior_facet_node_map.__doc__ = functionspace.FunctionSpaceT.interior_facet_node_map.__doc__
+    interior_facet_node_map.__doc__ = functionspace.FunctionSpace.interior_facet_node_map.__doc__
 
     def exterior_facet_node_map(self, bcs=None):
         return self._function_space.exterior_facet_node_map(bcs)
-    exterior_facet_node_map.__doc__ = functionspace.FunctionSpaceT.exterior_facet_node_map.__doc__
+    exterior_facet_node_map.__doc__ = functionspace.FunctionSpace.exterior_facet_node_map.__doc__
 
     def vector(self):
         """Return a :class:`.Vector` wrapping the data in this :class:`Function`"""
@@ -307,7 +307,13 @@ class Function(ufl.Coefficient):
         self._label = "a function"
 
         # self._repr = None
-        # self._split = None
+        self._split = None
+
+        if cachetools:
+            # LRU cache for expressions assembled onto this function
+            self._expression_cache = cachetools.LRUCache(maxsize=50)
+        else:
+            self._expression_cache = None
 
     @property
     def t(self):

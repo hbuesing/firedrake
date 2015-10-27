@@ -350,6 +350,11 @@ class MeshT(object):
             self._callback(self)
 
     @property
+    def t(self):
+        """The underlying mesh topology object."""
+        return self
+
+    @property
     def layers(self):
         return None
 
@@ -627,8 +632,8 @@ class Mesh(object):
                     #                                      val=periodic_coords,
                     #                                      name="Coordinates")
                 else:
-                    coordinates_fs = functionspace.VectorFunctionSpaceT(self.t, "Lagrange", 1,
-                                                                        dim=geometric_dim)
+                    coordinates_fs = functionspace.VectorFunctionSpace(self.t, "Lagrange", 1,
+                                                                       dim=geometric_dim)
 
                     coordinates = dmplex.reordered_coords(plex, coordinates_fs._global_numbering,
                                                           (self.t.num_vertices(), geometric_dim))
@@ -688,8 +693,7 @@ class Mesh(object):
         self.init()
 
         coordinates_fs = self._coordinates.function_space()
-        # TODO: why VectorFunctionSpace?
-        V = functionspace.VectorFunctionSpace(self, coordinates_fs)
+        V = functionspace.WithGeo(coordinates_fs, self)
         f = function.Function(V, val=self._coordinates)
         return f
 
@@ -957,8 +961,8 @@ class ExtrudedMesh(Mesh):
 
         if gdim is None:
             gdim = self.t.ufl_cell().topological_dimension()  # TODO
-        coordinates_fs = functionspace.VectorFunctionSpaceT(self.t, hfamily, hdegree, dim=gdim,
-                                                            vfamily="Lagrange", vdegree=1)
+        coordinates_fs = functionspace.VectorFunctionSpace(self.t, hfamily, hdegree, dim=gdim,
+                                                           vfamily="Lagrange", vdegree=1)
 
         self._coordinates = function.FunctionT(coordinates_fs, name="Coordinates")
         self._ufl_domain = ufl.Domain(self._coordinates)

@@ -554,6 +554,9 @@ class WithGeo(object):
     def __eq__(self, other):
         return self._t == other._t and self._mesh is other._mesh
 
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
     def __len__(self):
         return len(self._t)
 
@@ -695,41 +698,24 @@ class VectorFunctionSpace(FunctionSpaceBase):
 
 
 class TensorFunctionSpace(FunctionSpaceBase):
-    """
-    A tensor-valued :class:`FunctionSpace`.
-    """
-    def __init__(self, mesh, family, degree=None, shape=None, symmetry=None, name=None,
-                 vfamily=None, vdegree=None):
-        # if self._initialized:
-        #     return
-        # The argument list is a joke at this point: if uninitialised,
-        # the real arguments are like that of _cache_key. We need the
-        # argument list above though:
-        # - to prevent a failure when already initialised, and
-        # - for "smart" code assistant tools.
+    """A tensor-valued :class:`FunctionSpace`."""
+    def __new__(cls, mesh, family, degree=None, shape=None, symmetry=None, name=None, vfamily=None, vdegree=None):
         mesh.init()
-        element = family.reconstruct(domain=mesh.ufl_domain())
-        super(TensorFunctionSpace, self).__init__(mesh, element, name,
-                                                  dim=shape, rank=len(shape))
-        # self._initialized = True
 
-    # @classmethod
-    # def _process_args(cls, mesh, family, degree, shape=None, symmetry=None,
-    #                   vfamily=None, vdegree=None, **kwargs):
-    #     # TensorFunctionSpace shape defaults to the (gdim, gdim)
-    #     shape = shape or (mesh.ufl_cell().geometric_dimension(),) * 2
+        # TensorFunctionSpace shape defaults to the (gdim, gdim)
+        shape = shape or (mesh.ufl_cell().geometric_dimension(),) * 2
 
-    #     if isinstance(mesh, mesh_t.ExtrudedMesh):
-    #         raise NotImplementedError("TFS on extruded meshes not implemented")
-    #     else:
-    #         element = ufl.TensorElement(family, domain=mesh.ufl_cell(),
-    #                                     degree=degree, shape=shape,
-    #                                     symmetry=symmetry)
-    #     return (mesh, mesh, element), dict(kwargs, shape=shape)
+        if isinstance(mesh.t.ufl_cell(), ufl.OuterProductCell):
+            raise NotImplementedError("TensorFunctionSpace on extruded meshes not implemented")
+        else:
+            element = ufl.TensorElement(family, domain=mesh.t.ufl_cell(),
+                                        degree=degree, shape=shape,
+                                        symmetry=symmetry)
 
-    # @classmethod
-    # def _cache_key(cls, mesh, element, name=None, **kwargs):
-    #     return element, name
+        self = super(TensorFunctionSpace, cls).__new__(cls, mesh.t, element, name=name, shape=shape)
+        if mesh is not mesh.t:
+            self = WithGeo(self, mesh)
+        return self
 
     # def __getitem__(self, i):
     #     """Return self if ``i`` is 0, otherwise raise an error."""
@@ -849,18 +835,21 @@ class MixedFunctionSpace(FunctionSpaceBase):
             yield s
 
     # @property
-    # def dim(self):
-    #     """Return a tuple of :attr:`FunctionSpace.dim`\s of the
+    # def shape(self):
+    #     """Return a tuple of :attr:`FunctionSpace.shape`\s of the
     #     :class:`FunctionSpace`\s of which this :class:`MixedFunctionSpace` is
     #     composed."""
-    #     return tuple(fs.dim for fs in self._spaces)
+    #     shape = ()
+    #     for fs in self._spaces:
+    #         shape += fs.shape
+    #     return shape
 
-    # @property
-    # def cdim(self):
-    #     """Return the sum of the :attr:`FunctionSpace.dim`\s of the
-    #     :class:`FunctionSpace`\s this :class:`MixedFunctionSpace` is
-    #     composed of."""
-    #     return sum(fs.dim for fs in self._spaces)
+    @property
+    def dim(self):
+        """Return the sum of the :attr:`FunctionSpace.dim`\s of the
+        :class:`FunctionSpace`\s this :class:`MixedFunctionSpace` is
+        composed of."""
+        return sum(fs.dim for fs in self._spaces)
 
     @property
     def node_count(self):

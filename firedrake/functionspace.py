@@ -118,10 +118,9 @@ class FunctionSpaceBase(object):
                 self.dof_classes[i] += ndofs * mesh._entity_classes[d, i]
 
         # Tell the DM about the layout of the global vector
-        # TODO:
-        # from firedrake.function import Function
-        # with Function(self).dat.vec_ro as v:
-        #     self._dm.setGlobalVector(v.duplicate())
+        from firedrake.function import FunctionT
+        with FunctionT(self).dat.vec_ro as v:
+            self._dm.setGlobalVector(v.duplicate())
 
         self._node_count = self._global_numbering.getStorageSize()
 
@@ -357,25 +356,24 @@ class FunctionSpaceBase(object):
                 for bc in lbcs:
                     if bc.sub_domain in ["top", "bottom"]:
                         continue
-                    # TODO:
-                    # if isinstance(bc.function_space(), IndexedVFS):
-                    #     # For indexed VFS bcs, we encode the component
-                    #     # in the high bits of the map value.
-                    #     # That value is then negated to indicate to
-                    #     # the generated code to discard the values
-                    #     #
-                    #     # So here we do:
-                    #     #
-                    #     # node = -(node + 2**(30-cmpt) + 1)
-                    #     #
-                    #     # And in the generated code we can then
-                    #     # extract the information to discard the
-                    #     # correct entries.
-                    #     val = 2 ** (30 - bc.function_space().index)
-                    #     # bcids is sorted, so use searchsorted to find indices
-                    #     idx = np.searchsorted(bcids, bc.nodes)
-                    #     negids[idx] += val
-                    #     decorate = True
+                    if isinstance(bc.function_space(), IndexedVFS):
+                        # For indexed VFS bcs, we encode the component
+                        # in the high bits of the map value.
+                        # That value is then negated to indicate to
+                        # the generated code to discard the values
+                        #
+                        # So here we do:
+                        #
+                        # node = -(node + 2**(30-cmpt) + 1)
+                        #
+                        # And in the generated code we can then
+                        # extract the information to discard the
+                        # correct entries.
+                        val = 2 ** (30 - bc.function_space().index)
+                        # bcids is sorted, so use searchsorted to find indices
+                        idx = np.searchsorted(bcids, bc.nodes)
+                        negids[idx] += val
+                        decorate = True
                 node_list_bc = np.arange(self.node_count, dtype=np.int32)
                 # Fix up for extruded, doesn't commute with indexedvfs for now
                 from firedrake.mesh import ExtrudedMeshT as ExtrudedMesh
@@ -539,6 +537,9 @@ class WithGeo(object):
 
         if hasattr(self._t, '_parent'):
             self._parent = WithGeo(self._t._parent, self._mesh)
+
+        if hasattr(self._t, '_fs'):
+            self._fs = WithGeo(self._t._fs, self._mesh)
 
         # # Tell the DM about the layout of the global vector
         # from firedrake.function import Function
@@ -742,7 +743,14 @@ class MixedFunctionSpace(FunctionSpaceBase):
             ME  = MixedFunctionSpace([P2v, P1, P1, P1])
         """
 
-        spaces = [space.t for space in geometric_spaces]
+        # TODO
+        mesh = geometric_spaces[0].mesh()
+        for i in xrange(1, len(geometric_spaces)):
+            assert geometric_spaces[i].mesh() is mesh
+        if mesh.t is mesh:
+            spaces = geometric_spaces
+        else:
+            spaces = [space.t for space in geometric_spaces]
         # if self._initialized:
         #     return
         self = object.__new__(cls)
@@ -755,10 +763,9 @@ class MixedFunctionSpace(FunctionSpaceBase):
         # self._index = None
         # self._initialized = True
         dm = PETSc.DMShell().create()
-        # TODO:
-        # from firedrake.function import Function
-        # with Function(self).dat.vec_ro as v:
-        #     dm.setGlobalVector(v.duplicate())
+        from firedrake.function import FunctionT
+        with FunctionT(self).dat.vec_ro as v:
+            dm.setGlobalVector(v.duplicate())
         dm.setAttr('__fs__', weakref.ref(self))
         dm.setCreateFieldDecomposition(self.create_field_decomp)
         dm.setCreateSubDM(self.create_subdm)

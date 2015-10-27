@@ -483,7 +483,13 @@ class MeshT(object):
         return self._plex.createSection([1], dofs_per_entity,
                                         perm=self._plex_renumbering)
 
-    # TODO: cell_orientations
+    def cell_orientations(self):
+        """Return the orientation of each cell in the mesh.
+
+        Use :func:`init_cell_orientations` to initialise this data."""
+        if not hasattr(self, '_cell_orientations'):
+            raise RuntimeError("No cell orientations found, did you forget to call init_cell_orientations?")
+        return self._cell_orientations
 
     def num_cells(self):
         cStart, cEnd = self._plex.getHeightStratum(0)
@@ -697,14 +703,6 @@ class Mesh(object):
         f = function.Function(V, val=self._coordinates)
         return f
 
-    def cell_orientations(self):
-        """Return the orientation of each cell in the mesh.
-
-        Use :func:`init_cell_orientations` to initialise this data."""
-        if not hasattr(self, '_cell_orientations'):
-            raise RuntimeError("No cell orientations found, did you forget to call init_cell_orientations?")
-        return self._cell_orientations
-
     def init_cell_orientations(self, expr):
         """Compute and initialise :attr:`cell_orientations` relative to a specified orientation.
 
@@ -776,7 +774,7 @@ class Mesh(object):
         op2.par_loop(kernel, self.cell_set,
                      cell_orientations.dat(op2.WRITE, cell_orientations.cell_node_map()),
                      self.coordinates.dat(op2.READ, self.coordinates.cell_node_map()))
-        self._cell_orientations = cell_orientations
+        self.t._cell_orientations = cell_orientations
 
     def __getattr__(self, name):
         return getattr(self.t, name)

@@ -16,11 +16,6 @@ def fs(request, cg1cg1, cg1vcg1, cg1dg0, cg2dg1):
             'cg2dg1': cg2dg1}[request.param]
 
 
-def test_function_space_cached(mesh):
-    "FunctionSpaces defined on the same mesh and element are cached."
-    assert FunctionSpace(mesh, "CG", 1) is FunctionSpace(mesh, "CG", 1)
-
-
 def test_function_space_different_mesh_differ(mesh, mesh2):
     "FunctionSpaces defined on different meshes differ."
     assert FunctionSpace(mesh, "CG", 1) is not FunctionSpace(mesh2, "CG", 1)

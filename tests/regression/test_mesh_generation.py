@@ -34,14 +34,6 @@ def test_interval_negative_length():
         IntervalMesh(10, 2, 1)
 
 
-def test_periodic_unit_interval():
-    assert abs(integrate_one(PeriodicUnitIntervalMesh(3)) - 1) < 1e-3
-
-
-def test_periodic_interval():
-    assert abs(integrate_one(PeriodicIntervalMesh(3, 5.0)) - 5.0) < 1e-3
-
-
 def test_unit_square():
     assert abs(integrate_one(UnitSquareMesh(3, 3)) - 1) < 1e-3
 
@@ -79,16 +71,6 @@ def test_unit_interval_parallel():
 @pytest.mark.parallel
 def test_interval_parallel():
     assert abs(integrate_one(IntervalMesh(30, 5.0)) - 5.0) < 1e-3
-
-
-@pytest.mark.parallel
-def test_periodic_unit_interval_parallel():
-    assert abs(integrate_one(PeriodicUnitIntervalMesh(30)) - 1) < 1e-3
-
-
-@pytest.mark.parallel
-def test_periodic_interval_parallel():
-    assert abs(integrate_one(PeriodicIntervalMesh(30, 5.0)) - 5.0) < 1e-3
 
 
 @pytest.mark.parallel

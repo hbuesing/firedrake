@@ -740,7 +740,7 @@ class TensorFunctionSpace(FunctionSpaceBase):
 class MixedFunctionSpace(FunctionSpaceBase):
     """A mixed finite element :class:`FunctionSpace`."""
 
-    def __init__(self, spaces, name=None):
+    def __new__(cls, geometric_spaces, name=None):
         """
         :param spaces: a list (or tuple) of :class:`FunctionSpace`\s
 
@@ -756,8 +756,10 @@ class MixedFunctionSpace(FunctionSpaceBase):
             ME  = MixedFunctionSpace([P2v, P1, P1, P1])
         """
 
+        spaces = [space.t for space in geometric_spaces]
         # if self._initialized:
         #     return
+        self = object.__new__(cls)
         self._spaces = [IndexedFunctionSpace(s, i, self)
                         for i, s in enumerate(flatten(spaces))]
         self._mesh = self._spaces[0].mesh()
@@ -777,6 +779,7 @@ class MixedFunctionSpace(FunctionSpaceBase):
         self._dm = dm
         self._ises = self.dof_dset.field_ises
         self._subspaces = []
+        return WithGeo(self, geometric_spaces[0].mesh())
 
     @classmethod
     def create_subdm(cls, dm, fields, *args, **kwargs):
@@ -956,13 +959,6 @@ class MixedFunctionSpace(FunctionSpaceBase):
                             for i, (s, v) in enumerate(zip(self._spaces, val)))
 
 
-# TODO!
-# def MixedFunctionSpace(spaces, name=None):
-#     """A mixed finite element :class:`FunctionSpace`."""
-#     topological_spaces = [space.t for space in spaces]
-#     return WithGeo(MixedFunctionSpace(topological_spaces, name=name), spaces[0].mesh())
-
-
 class IndexedVFS(FunctionSpaceBase):
     """A helper class used to keep track of indexing of a
     :class:`VectorFunctionSpace`.
@@ -1005,12 +1001,13 @@ class IndexedFunctionSpace(FunctionSpaceBase):
     """A :class:`.FunctionSpaceBase` with an index to indicate which position
     it has as part of a :class:`MixedFunctionSpace`."""
 
-    def __init__(self, fs, index, parent):
+    def __new__(cls, fs, index, parent):
         """
         :param fs: the :class:`.FunctionSpaceBase` that was extracted
         :param index: the position in the parent :class:`MixedFunctionSpace`
         :param parent: the parent :class:`MixedFunctionSpace`
         """
+        self = object.__new__(cls)
         # if self._initialized:
         #     return
         # If the function space was extracted from a mixed function space,
@@ -1025,6 +1022,7 @@ class IndexedFunctionSpace(FunctionSpaceBase):
         self._index = index
         self._parent = parent
         # self._initialized = True
+        return self
 
     @property
     def index(self):

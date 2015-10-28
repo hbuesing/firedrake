@@ -801,8 +801,8 @@ class ExtrudedMeshT(MeshT):
         self._plex = mesh._plex
         self._plex_renumbering = mesh._plex_renumbering
         self._entity_classes = mesh._entity_classes
+        self.name = mesh.name
         # TODO:
-        # self.name = mesh.name
         # self._cell_numbering = mesh._cell_numbering
 
     @property

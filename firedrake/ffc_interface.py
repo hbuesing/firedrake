@@ -163,12 +163,10 @@ class FFCKernel(DiskCached):
                    + str(parameters)).hexdigest()
 
     def _needs_orientations(self, elements):
-        if len(elements) == 0:
-            return False
-        cell = elements[0].cell()
-        if cell.topological_dimension() == cell.geometric_dimension():
-            return False
         for e in elements:
+            cell = e.cell()
+            if cell.topological_dimension() == cell.geometric_dimension():
+                continue
             if isinstance(e, ufl.MixedElement) and e.family() != 'Real':
                 if any("contravariant piola" in fiat_utils.fiat_from_ufl_element(s).mapping()
                        for s in e.sub_elements()):

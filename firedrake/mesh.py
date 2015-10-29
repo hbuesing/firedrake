@@ -580,6 +580,38 @@ class Mesh(object):
 
         utils._init()
 
+        import firedrake.function as function
+        if isinstance(meshfile, function.FunctionT):
+            coordinates = meshfile
+
+            # A cache of function spaces that have been built on this mesh
+            self._cache = {}
+            self.uid = utils._new_uid()
+
+            # Create mesh topology
+            self._t = coordinates.function_space().mesh()
+
+            self._coordinates = coordinates
+
+            # Set UFL domain
+            self._ufl_domain = ufl.Domain(coordinates)
+
+            # Add subdomain_data to the measure objects we store with
+            # the mesh.  These are weakrefs for consistency with the
+            # "global" measure objects
+            self._dx = ufl.Measure('cell', subdomain_data=weakref.ref(self._coordinates))
+            self._ds = ufl.Measure('exterior_facet', subdomain_data=weakref.ref(self._coordinates))
+            self._dS = ufl.Measure('interior_facet', subdomain_data=weakref.ref(self._coordinates))
+            # Set the subdomain_data on all the default measures to this
+            # coordinate field.
+            # We don't set the domain on the measure since this causes
+            # an uncollectable reference in the global space (dx is
+            # global).  Furthermore, it's never used anyway.
+            for measure in [ufl.dx, ufl.ds, ufl.dS]:
+                measure._subdomain_data = weakref.ref(self._coordinates)
+
+            return
+
         geometric_dim = kwargs.get("dim", None)
         reorder = kwargs.get("reorder", parameters["reorder_meshes"])
         periodic_coords = kwargs.get("periodic_coords", None)

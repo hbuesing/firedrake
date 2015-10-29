@@ -69,15 +69,18 @@ def make_flat_fiat_element(ufl_cell_element, ufl_cell, flattened_entity_dofs):
     return base_element
 
 
-def make_extruded_coords(extruded_mesh, layer_height,
-                         extrusion_type='uniform', kernel=None,
-                         output_coords=None):
+def make_extruded_coords(extruded_topology, base_coords, ext_coords,
+                         layer_height, extrusion_type='uniform', kernel=None):
     """
     Given either a kernel or a (fixed) layer_height, compute an
     extruded coordinate field for an extruded mesh.
 
-    :arg extruded_mesh: an :class:`ExtrudedMesh` to extrude a
-         coordinate field for.
+    :arg extruded_topology: an :class:`ExtrudedMeshTopology` to extrude
+         a coordinate field for.
+    :arg base_coords: a :class:`~.Function` to read the base
+         coordinates from.
+    :arg ext_coords: a :class:`~.Function` to write the extruded
+         coordinates into.
     :arg layer_height: an equi-spaced height for each layer.
     :arg extrusion_type: the type of extrusion to use.  Predefined
          options are either "uniform" (creating equi-spaced layers by
@@ -87,9 +90,6 @@ def make_extruded_coords(extruded_mesh, layer_height,
          by extruding coordinates in the outward cell-normal
          direction, needs a P1dgxP1 coordinate field).
     :arg kernel: an optional kernel to carry out coordinate extrusion.
-    :arg output_coords: an optional :class:`~.Function` to write the
-         extruded coordinates into.  If not provided, the coordinate
-         field in the :data:`extruded_mesh` will be written to.
 
     The kernel signature (if provided) is::
 
@@ -101,11 +101,6 @@ def make_extruded_coords(extruded_mesh, layer_height,
     coordinates on the extruded cell (to write to), the layer number
     of each cell and the fixed layer height.
     """
-    base_coords = extruded_mesh._base_mesh._coordinates
-    if output_coords is None:
-        ext_coords = extruded_mesh._coordinates
-    else:
-        ext_coords = output_coords
     vert_space = ext_coords.function_space().ufl_element()._B
     if kernel is None and not (vert_space.degree() == 1 and
                                vert_space.family() in ['Lagrange',
@@ -222,11 +217,11 @@ def make_extruded_coords(extruded_mesh, layer_height,
 
     # Dat to hold layer number
     import firedrake.functionspace as fs
-    layer_fs = fs.FunctionSpace(extruded_mesh.t, 'DG', 0)
-    layers = extruded_mesh.layers
+    layer_fs = fs.FunctionSpace(extruded_topology, 'DG', 0)
+    layers = extruded_topology.layers
     layer = op2.Dat(layer_fs.dof_dset,
                     np.repeat(np.arange(layers-1, dtype=np.int32),
-                              extruded_mesh.cell_set.total_size).reshape(layers-1, extruded_mesh.cell_set.total_size).T.ravel(), dtype=np.int32)
+                              extruded_topology.cell_set.total_size).reshape(layers-1, extruded_topology.cell_set.total_size).T.ravel(), dtype=np.int32)
     height = op2.Global(1, layer_height, dtype=float)
     op2.par_loop(kernel,
                  ext_coords.cell_set,

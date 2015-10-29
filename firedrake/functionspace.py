@@ -527,13 +527,13 @@ class FunctionSpaceBase(object):
 
 
 class WithGeo(object):
-    def __init__(self, topological_function_space, mesh_geometry):
-        assert mesh_geometry.t is topological_function_space.mesh()
+    def __init__(self, function_space, mesh):
+        assert mesh.topology is function_space.mesh()
 
-        self._t = topological_function_space
-        self._mesh = mesh_geometry
+        self._t = function_space
+        self._mesh = mesh
 
-        self._ufl_element = self._t.ufl_element().reconstruct(domain=self._mesh)
+        self._ufl_element = function_space.ufl_element().reconstruct(domain=mesh)
 
         if hasattr(self._t, '_parent'):
             self._parent = WithGeo(self._t._parent, self._mesh)
@@ -622,6 +622,7 @@ class FunctionSpace(FunctionSpaceBase):
 
         """
         mesh.init()
+        mesh_t = mesh.topology
 
         # Two choices:
         # 1) Pass in mesh, family, degree to generate a simple function space.
@@ -632,10 +633,10 @@ class FunctionSpace(FunctionSpaceBase):
             element = family
         else:
             # First case...
-            if isinstance(mesh.t.ufl_cell(), ufl.OuterProductCell) and vfamily is not None and vdegree is not None:
+            if isinstance(mesh_t.ufl_cell(), ufl.OuterProductCell) and vfamily is not None and vdegree is not None:
                 # If OuterProductCell, make the OuterProductElement
                 la = ufl.FiniteElement(family,
-                                       domain=mesh.t._base_mesh.ufl_cell(),
+                                       domain=mesh_t._base_mesh.ufl_cell(),
                                        degree=degree)
                 # If second element was passed in, use it
                 lb = ufl.FiniteElement(vfamily,
@@ -646,10 +647,10 @@ class FunctionSpace(FunctionSpaceBase):
             else:
                 # Otherwise, just make the element
                 element = ufl.FiniteElement(family,
-                                            domain=mesh.t.ufl_cell(),
+                                            domain=mesh_t.ufl_cell(),
                                             degree=degree)
-        self = super(FunctionSpace, cls).__new__(cls, mesh.t, element, name=name)
-        if mesh is not mesh.t:
+        self = super(FunctionSpace, cls).__new__(cls, mesh_t, element, name=name)
+        if mesh is not mesh_t:
             self = WithGeo(self, mesh)
         return self
 
@@ -659,15 +660,16 @@ class VectorFunctionSpace(FunctionSpaceBase):
 
     def __new__(cls, mesh, family, degree=None, dim=None, name=None, vfamily=None, vdegree=None):
         mesh.init()
+        mesh_t = mesh.topology
 
         # VectorFunctionSpace dimension defaults to the geometric dimension of the mesh.
         dim = dim or mesh.ufl_cell().geometric_dimension()
 
-        if isinstance(mesh.t.ufl_cell(), ufl.OuterProductCell) and isinstance(family, ufl.OuterProductElement):
+        if isinstance(mesh_t.ufl_cell(), ufl.OuterProductCell) and isinstance(family, ufl.OuterProductElement):
             element = ufl.OuterProductVectorElement(family, dim=dim)
-        elif isinstance(mesh.t.ufl_cell(), ufl.OuterProductCell) and vfamily is not None and vdegree is not None:
+        elif isinstance(mesh_t.ufl_cell(), ufl.OuterProductCell) and vfamily is not None and vdegree is not None:
             la = ufl.FiniteElement(family,
-                                   domain=mesh.t._base_mesh.ufl_cell(),
+                                   domain=mesh_t._base_mesh.ufl_cell(),
                                    degree=degree)
             lb = ufl.FiniteElement(vfamily,
                                    domain=ufl.interval,
@@ -675,11 +677,11 @@ class VectorFunctionSpace(FunctionSpaceBase):
             element = ufl.OuterProductVectorElement(la, lb, dim=dim)
         else:
             element = ufl.VectorElement(family,
-                                        domain=mesh.t.ufl_cell(),
+                                        domain=mesh_t.ufl_cell(),
                                         degree=degree, dim=dim)
 
-        self = super(VectorFunctionSpace, cls).__new__(cls, mesh.t, element, name=name, shape=(dim,))
-        if mesh is not mesh.t:
+        self = super(VectorFunctionSpace, cls).__new__(cls, mesh_t, element, name=name, shape=(dim,))
+        if mesh is not mesh_t:
             self = WithGeo(self, mesh)
         return self
 
@@ -695,19 +697,20 @@ class TensorFunctionSpace(FunctionSpaceBase):
     """A tensor-valued :class:`FunctionSpace`."""
     def __new__(cls, mesh, family, degree=None, shape=None, symmetry=None, name=None, vfamily=None, vdegree=None):
         mesh.init()
+        mesh_t = mesh.topology
 
         # TensorFunctionSpace shape defaults to the (gdim, gdim)
         shape = shape or (mesh.ufl_cell().geometric_dimension(),) * 2
 
-        if isinstance(mesh.t.ufl_cell(), ufl.OuterProductCell):
+        if isinstance(mesh_t.ufl_cell(), ufl.OuterProductCell):
             raise NotImplementedError("TensorFunctionSpace on extruded meshes not implemented")
         else:
-            element = ufl.TensorElement(family, domain=mesh.t.ufl_cell(),
+            element = ufl.TensorElement(family, domain=mesh_t.ufl_cell(),
                                         degree=degree, shape=shape,
                                         symmetry=symmetry)
 
-        self = super(TensorFunctionSpace, cls).__new__(cls, mesh.t, element, name=name, shape=shape)
-        if mesh is not mesh.t:
+        self = super(TensorFunctionSpace, cls).__new__(cls, mesh_t, element, name=name, shape=shape)
+        if mesh is not mesh_t:
             self = WithGeo(self, mesh)
         return self
 
@@ -740,7 +743,7 @@ class MixedFunctionSpace(FunctionSpaceBase):
         mesh = geometric_spaces[0].mesh()
         for i in xrange(1, len(geometric_spaces)):
             assert geometric_spaces[i].mesh() is mesh
-        if mesh.t is mesh:
+        if mesh.topology is mesh:
             spaces = geometric_spaces
         else:
             spaces = [space.t for space in geometric_spaces]

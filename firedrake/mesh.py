@@ -715,7 +715,7 @@ class Mesh(object):
 
         if expr.value_shape()[0] != 3:
             raise NotImplementedError('Only implemented for 3-vectors')
-        if self.ufl_cell() not in (ufl.Cell('triangle', 3), ufl.Cell("quadrilateral", 3), ufl.OuterProductCell(ufl.Cell('interval', 3), ufl.Cell('interval')), ufl.OuterProductCell(ufl.Cell('interval', 2), ufl.Cell('interval'), gdim=3)):
+        if self.ufl_cell() not in (ufl.Cell('triangle', 3), ufl.Cell("quadrilateral", 3), ufl.OuterProductCell(ufl.Cell('interval'), ufl.Cell('interval'), gdim=3)):
             raise NotImplementedError('Only implemented for triangles and quadrilaterals embedded in 3d')
 
         if hasattr(self, '_cell_orientations'):
@@ -958,7 +958,7 @@ class ExtrudedMesh(Mesh):
         hdegree = mesh._coordinates.element().degree()
 
         if gdim is None:
-            gdim = self.t.ufl_cell().topological_dimension()  # TODO
+            gdim = mesh.ufl_cell().geometric_dimension() + (extrusion_type == "uniform")
         coordinates_fs = functionspace.VectorFunctionSpace(self.t, hfamily, hdegree, dim=gdim,
                                                            vfamily="Lagrange", vdegree=1)
 

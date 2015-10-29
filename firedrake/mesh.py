@@ -286,13 +286,6 @@ class MeshT(object):
         self._plex = plex
         self.name = name
 
-        dim = plex.getDimension()
-
-        cStart, cEnd = plex.getHeightStratum(0)  # cells
-        cell_nfacets = plex.getConeSize(cStart)
-
-        self._ufl_cell = ufl.Cell(fiat_utils._cells[dim][cell_nfacets])
-
         # Mark exterior and interior facets
         # Note.  This must come before distribution, because otherwise
         # DMPlex will consider facets on the domain boundary to be
@@ -307,6 +300,13 @@ class MeshT(object):
             # refine this mesh in parallel.  Later, when we actually use
             # it, we grow the halo.
             plex.distribute(overlap=0)
+
+        dim = plex.getDimension()
+
+        cStart, cEnd = plex.getHeightStratum(0)  # cells
+        cell_nfacets = plex.getConeSize(cStart)
+
+        self._ufl_cell = ufl.Cell(fiat_utils._cells[dim][cell_nfacets])
 
         def callback(self):
             del self._callback

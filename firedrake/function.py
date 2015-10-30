@@ -2,6 +2,7 @@ from __future__ import absolute_import
 import numpy as np
 import FIAT
 import ufl
+import weakref
 
 import coffee.base as ast
 
@@ -255,6 +256,17 @@ class FunctionT(ufl.Coefficient):
     #         assemble_expressions.IDiv(self, expr))
 
     #     return self
+
+    def as_coordinates(self):
+        if hasattr(self, '_as_coordinates'):
+            mesh = self._as_coordinates()
+            if mesh is not None:
+                return mesh
+
+        from firedrake.mesh import MeshGeometry
+        mesh = MeshGeometry(self)
+        self._as_coordinates = weakref.ref(mesh)
+        return mesh
 
 
 class Function(ufl.Coefficient):

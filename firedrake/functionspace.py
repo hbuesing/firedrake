@@ -267,7 +267,7 @@ class FunctionSpaceBase(object):
             parent = None
 
         facet_set = self._mesh.exterior_facets.set
-        from firedrake.mesh import ExtrudedMeshT as ExtrudedMesh
+        from firedrake.mesh import ExtrudedMeshTopology as ExtrudedMesh
         if isinstance(self._mesh, ExtrudedMesh):
             name = "extruded_exterior_facet_node"
             offset = self.offset
@@ -376,7 +376,7 @@ class FunctionSpaceBase(object):
                         decorate = True
                 node_list_bc = np.arange(self.node_count, dtype=np.int32)
                 # Fix up for extruded, doesn't commute with indexedvfs for now
-                from firedrake.mesh import ExtrudedMeshT as ExtrudedMesh
+                from firedrake.mesh import ExtrudedMeshTopology as ExtrudedMesh
                 if isinstance(self.mesh(), ExtrudedMesh):
                     node_list_bc[bcids] = -10000000
                 else:
@@ -478,7 +478,7 @@ class FunctionSpaceBase(object):
                      facet_dat(op2.WRITE),
                      local_facet_dat(op2.READ))
 
-        from firedrake.mesh import ExtrudedMeshT as ExtrudedMesh
+        from firedrake.mesh import ExtrudedMeshTopology as ExtrudedMesh
         if isinstance(self._mesh, ExtrudedMesh):
             offset = self.offset[boundary_dofs[0]]
         else:

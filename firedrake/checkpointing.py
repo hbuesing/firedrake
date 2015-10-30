@@ -8,15 +8,14 @@ import firedrake
 __all__ = ["DumbCheckpoint", "FILE_READ", "FILE_CREATE", "FILE_UPDATE"]
 
 
-"""Open a checkpoint file for reading.  Raises an error if file does not exist."""
 FILE_READ = PETSc.Viewer.Mode.READ
+"""Open a checkpoint file for reading.  Raises an error if file does not exist."""
 
-"""Create a checkpoint file.  Truncates the file if it exists."""
 FILE_CREATE = PETSc.Viewer.Mode.WRITE
+"""Create a checkpoint file.  Truncates the file if it exists."""
 
-"""Open a checkpoint file for updating.  Creates the file if it does
-not exist, providing both read and write access."""
 FILE_UPDATE = PETSc.Viewer.Mode.APPEND
+"""Open a checkpoint file for updating.  Creates the file if it does not exist, providing both read and write access."""
 
 
 class DumbCheckpoint(object):
@@ -129,7 +128,7 @@ class DumbCheckpoint(object):
 
         :arg function: The function to load values into.
         :arg name: an (optional) name used to find the function values.  If
-             not provided, uses :data:`function.name()`.
+             not provided, uses ``function.name()``.
         """
         if not isinstance(function, firedrake.Function):
             raise ValueError("Can only load functions")

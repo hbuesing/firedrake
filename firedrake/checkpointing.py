@@ -47,8 +47,14 @@ class DumbCheckpoint(object):
 
     def close(self):
         """Close the checkpoint file (flushing any pending writes)"""
+        if hasattr(self, "_h5rep"):
+            del self._h5rep
         if hasattr(self, "vwr"):
             self.vwr.destroy()
+            del self.vwr
+
+    def __del__(self):
+        self.close()
 
     def store(self, function, name=None):
         """Store a function in the checkpoint file.
@@ -133,6 +139,21 @@ class DumbCheckpoint(object):
             v.load(self.vwr)
             v.setName(oname)
             self.vwr.popGroup()
+
+    def as_h5py(self):
+        """Attempt to convert the file handle to a :class:`h5py:File`.
+
+        This fails if h5py was not linked to the same HDF5 library as PETSc.
+
+        .. warning::
+
+           Explicitly closing this file, using :meth:`h5py:File.close`
+           will result in the checkpoint file being closed and PETSc
+           will probably subsequently produce an error.
+
+        """
+        self._h5rep = h5i.get_h5py_file(self.vwr)
+        return self._h5rep
 
     def __enter__(self):
         return self

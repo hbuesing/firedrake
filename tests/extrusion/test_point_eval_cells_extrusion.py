@@ -20,8 +20,8 @@ def mesh2d(request):
 
 @pytest.fixture(params=[('cg', False),
                         ('cg', True),
-                        pytest.mark.xfail(('dg', False)),
-                        pytest.mark.xfail(('dg', True)),
+                        ('dg', False),
+                        ('dg', True),
                         # TODO: generate mesh from .geo file
                         longtest(('file', '../t11_tria.msh')),
                         longtest(('file', '../t11_quad.msh'))])

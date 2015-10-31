@@ -78,15 +78,13 @@ class FunctionT(ufl.Coefficient):
 
         self.uid = utils._new_uid()
         self._name = name or 'function_%d' % self.uid
+        self._label = "a function"
+        self._split = None
 
         if isinstance(val, (op2.Dat, op2.DatView)):
             self.dat = val
         else:
             self.dat = function_space.make_dat(val, dtype, self.name(), uid=self.uid)
-
-        # self._label = "a function"
-        # self._repr = None
-        self._split = None
 
     def split(self):
         """Extract any sub :class:`Function`\s defined on the component spaces
@@ -160,16 +158,20 @@ class FunctionT(ufl.Coefficient):
         """Return the name of this :class:`Function`"""
         return self._name
 
-    # def rename(self, name=None, label=None):
-    #     """Set the name and or label of this :class:`Function`
+    def label(self):
+        """Return the label (a description) of this :class:`Function`"""
+        return self._label
 
-    #     :arg name: The new name of the `Function` (if not `None`)
-    #     :arg label: The new label for the `Function` (if not `None`)
-    #     """
-    #     if name is not None:
-    #         self._name = name
-    #     if label is not None:
-    #         self._label = label
+    def rename(self, name=None, label=None):
+        """Set the name and or label of this :class:`Function`
+
+        :arg name: The new name of the `Function` (if not `None`)
+        :arg label: The new label for the `Function` (if not `None`)
+        """
+        if name is not None:
+            self._name = name
+        if label is not None:
+            self._label = label
 
     def __str__(self):
         if self._name is not None:
@@ -177,100 +179,8 @@ class FunctionT(ufl.Coefficient):
         else:
             return super(Function, self).__str__()
 
-    # def assign(self, expr, subset=None):
-    #     """Set the :class:`Function` value to the pointwise value of
-    #     expr. expr may only contain :class:`Function`\s on the same
-    #     :class:`.FunctionSpace` as the :class:`Function` being assigned to.
-
-    #     Similar functionality is available for the augmented assignment
-    #     operators `+=`, `-=`, `*=` and `/=`. For example, if `f` and `g` are
-    #     both Functions on the same :class:`FunctionSpace` then::
-
-    #       f += 2 * g
-
-    #     will add twice `g` to `f`.
-
-    #     If present, subset must be an :class:`pyop2.Subset` of
-    #     :attr:`node_set`. The expression will then only be assigned
-    #     to the nodes on that subset.
-    #     """
-
-    #     if isinstance(expr, Function) and \
-    #             expr._function_space == self._function_space:
-    #         expr.dat.copy(self.dat, subset=subset)
-    #         return self
-
-    #     from firedrake import assemble_expressions
-    #     assemble_expressions.evaluate_expression(
-    #         assemble_expressions.Assign(self, expr), subset)
-
-    #     return self
-
-    # def __iadd__(self, expr):
-
-    #     if np.isscalar(expr):
-    #         self.dat += expr
-    #         return self
-    #     if isinstance(expr, Function) and \
-    #             expr._function_space == self._function_space:
-    #         self.dat += expr.dat
-    #         return self
-
-    #     from firedrake import assemble_expressions
-    #     assemble_expressions.evaluate_expression(
-    #         assemble_expressions.IAdd(self, expr))
-
-    #     return self
-
-    # def __isub__(self, expr):
-
-    #     if np.isscalar(expr):
-    #         self.dat -= expr
-    #         return self
-    #     if isinstance(expr, Function) and \
-    #             expr._function_space == self._function_space:
-    #         self.dat -= expr.dat
-    #         return self
-
-    #     from firedrake import assemble_expressions
-    #     assemble_expressions.evaluate_expression(
-    #         assemble_expressions.ISub(self, expr))
-
-    #     return self
-
-    # def __imul__(self, expr):
-
-    #     if np.isscalar(expr):
-    #         self.dat *= expr
-    #         return self
-    #     if isinstance(expr, Function) and \
-    #             expr._function_space == self._function_space:
-    #         self.dat *= expr.dat
-    #         return self
-
-    #     from firedrake import assemble_expressions
-    #     assemble_expressions.evaluate_expression(
-    #         assemble_expressions.IMul(self, expr))
-
-    #     return self
-
-    # def __idiv__(self, expr):
-
-    #     if np.isscalar(expr):
-    #         self.dat /= expr
-    #         return self
-    #     if isinstance(expr, Function) and \
-    #             expr._function_space == self._function_space:
-    #         self.dat /= expr.dat
-    #         return self
-
-    #     from firedrake import assemble_expressions
-    #     assemble_expressions.evaluate_expression(
-    #         assemble_expressions.IDiv(self, expr))
-
-    #     return self
-
     def as_coordinates(self):
+        """Create a mesh object using this function as coordinates."""
         if hasattr(self, '_as_coordinates'):
             mesh = self._as_coordinates()
             if mesh is not None:
@@ -321,17 +231,12 @@ class Function(ufl.Coefficient):
                                       + str(type(function_space)))
 
         if isinstance(val, FunctionT):
-            assert val.function_space() == self.function_space().t
-            self._t = val
+            assert val.function_space() == self._function_space.t
+            self._value = val
         else:
-            self._t = FunctionT(self._function_space.t, val=val, name=name, dtype=dtype)
+            self._value = FunctionT(self._function_space.t, val=val, name=name, dtype=dtype)
 
-        # TODO:
         ufl.Coefficient.__init__(self, self.function_space().ufl_element())
-
-        self._label = "a function"
-
-        # self._repr = None
         self._split = None
 
         if cachetools:
@@ -339,13 +244,14 @@ class Function(ufl.Coefficient):
             self._expression_cache = cachetools.LRUCache(maxsize=50)
         else:
             self._expression_cache = None
+
         if isinstance(function_space, Function):
             self.assign(function_space)
 
     @property
     def t(self):
         """The underlying coordinateless function."""
-        return self._t
+        return self._value
 
     def __getattr__(self, name):
         return getattr(self.t, name)
@@ -387,39 +293,10 @@ class Function(ufl.Coefficient):
         from firedrake import projection
         return projection.project(b, self, *args, **kwargs)
 
-    def vector(self):
-        """Return a :class:`.Vector` wrapping the data in this :class:`Function`"""
-        return vector.Vector(self.dat)
-
     def function_space(self):
         """Return the :class:`.FunctionSpace`, :class:`.VectorFunctionSpace`
             or :class:`.MixedFunctionSpace` on which this :class:`Function` is defined."""
         return self._function_space
-
-    def name(self):
-        """Return the name of this :class:`Function`"""
-        return self._name
-
-    def label(self):
-        """Return the label (a description) of this :class:`Function`"""
-        return self._label
-
-    def rename(self, name=None, label=None):
-        """Set the name and or label of this :class:`Function`
-
-        :arg name: The new name of the `Function` (if not `None`)
-        :arg label: The new label for the `Function` (if not `None`)
-        """
-        if name is not None:
-            self._name = name
-        if label is not None:
-            self._label = label
-
-    def __str__(self):
-        if self._name is not None:
-            return self._name
-        else:
-            return super(Function, self).__str__()
 
     def interpolate(self, expression, subset=None):
         """Interpolate an expression onto this :class:`Function`.

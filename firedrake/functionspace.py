@@ -714,11 +714,6 @@ class TensorFunctionSpace(FunctionSpaceBase):
             self = WithGeo(self, mesh)
         return self
 
-    # def __getitem__(self, i):
-    #     """Return self if ``i`` is 0, otherwise raise an error."""
-    #     assert i == 0, "Can only extract subspace 0 from %r" % self
-    #     return self
-
 
 class MixedFunctionSpace(FunctionSpaceBase):
     """A mixed finite element :class:`FunctionSpace`."""

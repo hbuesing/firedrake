@@ -1,5 +1,6 @@
 import pytest
 from firedrake import *
+from firedrake.mesh import MeshTopology, MeshGeometry
 import gc
 
 
@@ -8,7 +9,7 @@ def howmany(cls):
 
 
 def test_meshes_collected():
-    before = howmany(Mesh)
+    before = howmany((MeshTopology, MeshGeometry))
 
     def foo():
         old_val = parameters['assembly_cache']['enabled']
@@ -26,7 +27,7 @@ def test_meshes_collected():
     gc.collect()
     gc.collect()
     gc.collect()
-    after = howmany(Mesh)
+    after = howmany((MeshTopology, MeshGeometry))
 
     assert before >= after
 
@@ -257,7 +258,7 @@ def test_mesh_fs_gced():
     from firedrake.functionspace import FunctionSpaceBase
     gc.collect()
     gc.collect()
-    nmesh = howmany(Mesh)
+    nmesh = howmany((MeshTopology, MeshGeometry))
     nfs = howmany(FunctionSpaceBase)
     for i in range(10):
         m = UnitIntervalMesh(5)
@@ -268,7 +269,7 @@ def test_mesh_fs_gced():
     gc.collect()
     gc.collect()
 
-    nmesh1 = howmany(Mesh)
+    nmesh1 = howmany((MeshTopology, MeshGeometry))
     nfs1 = howmany(FunctionSpaceBase)
 
     assert nmesh1 - nmesh < 5

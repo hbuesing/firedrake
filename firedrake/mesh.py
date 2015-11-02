@@ -668,7 +668,7 @@ class MeshGeometry(object):
         self._dx = ufl.Measure('cell', subdomain_data=weakref.ref(coordinates))
         self._ds = ufl.Measure('exterior_facet', subdomain_data=weakref.ref(coordinates))
         self._dS = ufl.Measure('interior_facet', subdomain_data=weakref.ref(coordinates))
-        if isinstance(self.ufl_cell(), ufl.OuterProductCell):
+        if self.layers:
             self._ds_t = ufl.Measure('exterior_facet_top', subdomain_data=weakref.ref(coordinates))
             self._ds_b = ufl.Measure('exterior_facet_bottom', subdomain_data=weakref.ref(coordinates))
             self._ds_v = ufl.Measure('exterior_facet_vert', subdomain_data=weakref.ref(coordinates))
@@ -681,7 +681,7 @@ class MeshGeometry(object):
         # global).  Furthermore, it's never used anyway.
         for measure in [ufl.dx, ufl.ds, ufl.dS]:
             measure._subdomain_data = weakref.ref(coordinates)
-        if isinstance(self.ufl_cell(), ufl.OuterProductCell):
+        if self.layers:
             for measure in [ufl.ds_t, ufl.ds_b, ufl.ds_v, ufl.dS_h, ufl.dS_v]:
                 measure._subdomain_data = weakref.ref(coordinates)
 

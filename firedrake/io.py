@@ -241,7 +241,7 @@ class _VTUFile(object):
 
         num_points = Vo.node_count
 
-        layers = mesh.layers - 1 if isinstance(e.cell(), OuterProductCell) else 1
+        layers = mesh.layers - 1 if mesh.layers else 1
         num_cells = mesh.num_cells() * layers
 
         if not isinstance(e.cell(), OuterProductCell) and e.cell().cellname() != "quadrilateral":

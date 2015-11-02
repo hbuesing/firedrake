@@ -541,10 +541,10 @@ class FunctionSpaceBase(ObjectCached):
             raise IndexError("Only index 0 supported on a FunctionSpace")
         return self
 
-    # def __mul__(self, other):
-    #     """Create a :class:`.MixedFunctionSpace` composed of this
-    #     :class:`.FunctionSpace` and other"""
-    #     return MixedFunctionSpace((self, other))
+    def __mul__(self, other):
+        """Create a :class:`.MixedFunctionSpace` composed of this
+        :class:`.FunctionSpace` and other"""
+        return MixedFunctionSpace((self, other))
 
 
 class WithGeometry(object):
@@ -737,7 +737,7 @@ class TensorFunctionSpace(FunctionSpaceBase):
 class MixedFunctionSpace(FunctionSpaceBase):
     """A mixed finite element :class:`FunctionSpace`."""
 
-    def __new__(cls, geometric_spaces, name=None):
+    def __new__(cls, spaces, name=None):
         """
         :param spaces: a list (or tuple) of :class:`FunctionSpace`\s
 
@@ -753,25 +753,32 @@ class MixedFunctionSpace(FunctionSpaceBase):
             ME  = MixedFunctionSpace([P2v, P1, P1, P1])
         """
 
-        # TODO
-        mesh = geometric_spaces[0].mesh()
-        for i in xrange(1, len(geometric_spaces)):
-            assert geometric_spaces[i].mesh() is mesh
-        if mesh.topology is mesh:
-            spaces = geometric_spaces
+        # Check that function spaces are on the same mesh
+        meshes = [space.mesh() for space in spaces]
+        for i in xrange(1, len(meshes)):
+            if meshes[i] is not meshes[0]:
+                raise ValueError("All function spaces must be defined on the same mesh!")
+
+        # Select mesh
+        mesh = meshes[0]
+
+        # Get topological spaces
+        if mesh is mesh.topology:
+            spaces = tuple(spaces)
         else:
-            spaces = [space.topological for space in geometric_spaces]
-        # if self._initialized:
-        #     return
-        self = object.__new__(cls)
+            spaces = tuple(space.topological for space in spaces)
+
+        # Ask object from cache
+        self = ObjectCached.__new__(cls, mesh, spaces, name)
+        if self._initialized:
+            return self
+
         self._spaces = [IndexedFunctionSpace(s, i, self)
                         for i, s in enumerate(flatten(spaces))]
-        self._mesh = self._spaces[0].mesh()
+        self._mesh = mesh.topology
         self._ufl_element = ufl.MixedElement(*[fs.ufl_element() for fs in self._spaces])
         self.name = name or '_'.join(str(s.name) for s in self._spaces)
-        # self.rank = 1
-        # self._index = None
-        # self._initialized = True
+        self._initialized = True
         dm = PETSc.DMShell().create()
         from firedrake.function import FunctionT
         with FunctionT(self).dat.vec_ro as v:
@@ -782,7 +789,14 @@ class MixedFunctionSpace(FunctionSpaceBase):
         self._dm = dm
         self._ises = self.dof_dset.field_ises
         self._subspaces = []
-        return WithGeometry(self, geometric_spaces[0].mesh())
+
+        if mesh is not mesh.topology:
+            self = WithGeometry(self, mesh)
+        return self
+
+    @classmethod
+    def _cache_key(cls, spaces, name):
+        return spaces, name
 
     @classmethod
     def create_subdm(cls, dm, fields, *args, **kwargs):
@@ -810,17 +824,6 @@ class MixedFunctionSpace(FunctionSpaceBase):
         names = [s.name for s in W]
         dms = [V._dm for V in W]
         return names, W._ises, dms
-
-    # @classmethod
-    # def _process_args(cls, *args, **kwargs):
-    #     """Convert list of spaces to tuple (to make it hashable)"""
-    #     mesh = args[0][0].mesh()
-    #     pargs = tuple(as_tuple(arg) for arg in args)
-    #     return (mesh, ) + pargs, kwargs
-
-    # @classmethod
-    # def _cache_key(cls, *args, **kwargs):
-    #     return args
 
     def split(self):
         """The list of :class:`FunctionSpace`\s of which this
@@ -850,16 +853,6 @@ class MixedFunctionSpace(FunctionSpaceBase):
     def __iter__(self):
         for s in self._spaces:
             yield s
-
-    # @property
-    # def shape(self):
-    #     """Return a tuple of :attr:`FunctionSpace.shape`\s of the
-    #     :class:`FunctionSpace`\s of which this :class:`MixedFunctionSpace` is
-    #     composed."""
-    #     shape = ()
-    #     for fs in self._spaces:
-    #         shape += fs.shape
-    #     return shape
 
     @property
     def dim(self):
@@ -991,10 +984,6 @@ class IndexedVFS(FunctionSpaceBase):
         return self._index
 
     # @classmethod
-    # def _process_args(self, parent, index):
-    #     return (parent.mesh(), parent, index), {}
-
-    # @classmethod
     # def _cache_key(self, parent, index):
     #     return parent, index
 
@@ -1015,8 +1004,6 @@ class IndexedFunctionSpace(FunctionSpaceBase):
         :param parent: the parent :class:`MixedFunctionSpace`
         """
         self = object.__new__(cls)
-        # if self._initialized:
-        #     return
         # If the function space was extracted from a mixed function space,
         # extract the underlying component space
         if isinstance(fs, IndexedFunctionSpace):
@@ -1028,7 +1015,6 @@ class IndexedFunctionSpace(FunctionSpaceBase):
         self._fs = fs
         self._index = index
         self._parent = parent
-        # self._initialized = True
         return self
 
     @property
@@ -1036,14 +1022,6 @@ class IndexedFunctionSpace(FunctionSpaceBase):
         """Position of this :class:`FunctionSpaceBase` in the
         :class:`.MixedFunctionSpace` it was extracted from."""
         return self._index
-
-    # @classmethod
-    # def _process_args(cls, fs, index, parent, **kwargs):
-    #     return (fs.mesh(), fs, index, parent), kwargs
-
-    # @classmethod
-    # def _cache_key(cls, *args, **kwargs):
-    #     return args
 
     def __getattr__(self, name):
         return getattr(self._fs, name)

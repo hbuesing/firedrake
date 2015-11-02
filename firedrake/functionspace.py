@@ -123,8 +123,7 @@ class FunctionSpaceBase(ObjectCached):
                 self.dof_classes[i] += ndofs * mesh._entity_classes[d, i]
 
         # Tell the DM about the layout of the global vector
-        from firedrake.function import FunctionT
-        with FunctionT(self).dat.vec_ro as v:
+        with self.make_dat().vec_ro as v:
             self._dm.setGlobalVector(v.duplicate())
 
         self._node_count = self._global_numbering.getStorageSize()
@@ -779,8 +778,7 @@ class MixedFunctionSpace(FunctionSpaceBase):
             self.name = name or '_'.join(str(s.name) for s in spaces)
             self._initialized = True
             dm = PETSc.DMShell().create()
-            from firedrake.function import FunctionT
-            with FunctionT(self).dat.vec_ro as v:
+            with self.make_dat().vec_ro as v:
                 dm.setGlobalVector(v.duplicate())
             dm.setAttr('__fs__', weakref.ref(self))
             dm.setCreateFieldDecomposition(self.create_field_decomp)

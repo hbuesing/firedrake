@@ -24,8 +24,8 @@ __all__ = ['FunctionSpace', 'VectorFunctionSpace',
 
 class FunctionSpaceMeta(type):
     def __instancecheck__(self, other):
-        if isinstance(other, WithGeo):
-            other = other.t
+        if isinstance(other, WithGeometry):
+            other = other.topological
         return super(FunctionSpaceMeta, self).__instancecheck__(other)
 
 
@@ -347,7 +347,7 @@ class FunctionSpaceBase(ObjectCached):
                 fs = bc.function_space()
                 if isinstance(fs, IndexedVFS):
                     fs = fs._parent
-                if fs.t != self:  # TODO!
+                if fs.topological != self:
                     raise RuntimeError("DirichletBC defined on a different FunctionSpace!")
             # Ensure bcs is a tuple in a canonical order for the hash key.
             lbcs = tuple(sorted(bcs, key=lambda bc: bc.__hash__()))
@@ -518,6 +518,11 @@ class FunctionSpaceBase(ObjectCached):
         """The product of the :attr:`.dim` of the :class:`.FunctionSpace`."""
         return np.prod(self.shape, dtype=int)
 
+    @property
+    def topological(self):
+        """Function space on a mesh topology."""
+        return self
+
     def mesh(self):
         return self._mesh
 
@@ -542,25 +547,22 @@ class FunctionSpaceBase(ObjectCached):
     #     return MixedFunctionSpace((self, other))
 
 
-class WithGeo(object):
+class WithGeometry(object):
     def __init__(self, function_space, mesh):
+        function_space = function_space.topological
         assert mesh.topology is function_space.mesh()
+        assert mesh.topology is not mesh
 
-        self._t = function_space
+        self._topological = function_space
         self._mesh = mesh
 
         self._ufl_element = function_space.ufl_element().reconstruct(domain=mesh)
 
-        if hasattr(self._t, '_parent'):
-            self._parent = WithGeo(self._t._parent, self._mesh)
+        if hasattr(function_space, '_parent'):
+            self._parent = WithGeometry(function_space._parent, mesh)
 
-        if hasattr(self._t, '_fs'):
-            self._fs = WithGeo(self._t._fs, self._mesh)
-
-        # # Tell the DM about the layout of the global vector
-        # from firedrake.function import Function
-        # with Function(self).dat.vec_ro as v:
-        #     self._dm.setGlobalVector(v.duplicate())
+        if hasattr(function_space, '_fs'):
+            self._fs = WithGeometry(function_space._fs, mesh)
 
     def mesh(self):
         return self._mesh
@@ -569,29 +571,29 @@ class WithGeo(object):
         return self._ufl_element
 
     def __eq__(self, other):
-        return self._t == other._t and self._mesh is other._mesh
+        return self._topological == other._topological and self._mesh is other._mesh
 
     def __ne__(self, other):
         return not self.__eq__(other)
 
     def __len__(self):
-        return len(self._t)
+        return len(self._topological)
 
     def split(self):
         spaces = []
-        for subspace in self._t.split():
-            spaces.append(WithGeo(subspace, self._mesh))
+        for subspace in self._topological.split():
+            spaces.append(WithGeometry(subspace, self._mesh))
         return spaces
 
     def __iter__(self):
-        for subspace in self._t:
-            yield WithGeo(subspace, self._mesh)
+        for subspace in self._topological:
+            yield WithGeometry(subspace, self._mesh)
 
     def __getitem__(self, i):
-        return WithGeo(self._t[i], self._mesh)
+        return WithGeometry(self._topological[i], self._mesh)
 
     def sub(self, i):
-        return WithGeo(self._t.sub(i), self._mesh)
+        return WithGeometry(self._topological.sub(i), self._mesh)
 
     def __mul__(self, other):
         """Create a :class:`.MixedFunctionSpace` composed of this
@@ -599,11 +601,12 @@ class WithGeo(object):
         return MixedFunctionSpace((self, other))
 
     @property
-    def t(self):
-        return self._t
+    def topological(self):
+        """Function space on a mesh topology."""
+        return self._topological
 
     def __getattr__(self, name):
-        return getattr(self._t, name)
+        return getattr(self._topological, name)
 
 
 class FunctionSpace(FunctionSpaceBase):
@@ -667,7 +670,7 @@ class FunctionSpace(FunctionSpaceBase):
                                             degree=degree)
         self = super(FunctionSpace, cls).__new__(cls, mesh_t, element, name=name)
         if mesh is not mesh_t:
-            self = WithGeo(self, mesh)
+            self = WithGeometry(self, mesh)
         return self
 
 
@@ -698,7 +701,7 @@ class VectorFunctionSpace(FunctionSpaceBase):
 
         self = super(VectorFunctionSpace, cls).__new__(cls, mesh_t, element, name=name, shape=(dim,))
         if mesh is not mesh_t:
-            self = WithGeo(self, mesh)
+            self = WithGeometry(self, mesh)
         return self
 
     def sub(self, i):
@@ -727,7 +730,7 @@ class TensorFunctionSpace(FunctionSpaceBase):
 
         self = super(TensorFunctionSpace, cls).__new__(cls, mesh_t, element, name=name, shape=shape)
         if mesh is not mesh_t:
-            self = WithGeo(self, mesh)
+            self = WithGeometry(self, mesh)
         return self
 
 
@@ -757,7 +760,7 @@ class MixedFunctionSpace(FunctionSpaceBase):
         if mesh.topology is mesh:
             spaces = geometric_spaces
         else:
-            spaces = [space.t for space in geometric_spaces]
+            spaces = [space.topological for space in geometric_spaces]
         # if self._initialized:
         #     return
         self = object.__new__(cls)
@@ -779,7 +782,7 @@ class MixedFunctionSpace(FunctionSpaceBase):
         self._dm = dm
         self._ises = self.dof_dset.field_ises
         self._subspaces = []
-        return WithGeo(self, geometric_spaces[0].mesh())
+        return WithGeometry(self, geometric_spaces[0].mesh())
 
     @classmethod
     def create_subdm(cls, dm, fields, *args, **kwargs):

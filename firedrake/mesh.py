@@ -714,7 +714,7 @@ class MeshGeometry(object):
         self.init()
 
         coordinates_fs = self._coordinates.function_space()
-        V = functionspace.WithGeo(coordinates_fs, self)
+        V = functionspace.WithGeometry(coordinates_fs, self)
         f = function.Function(V, val=self._coordinates)
         return f
 

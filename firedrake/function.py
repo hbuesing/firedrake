@@ -231,10 +231,10 @@ class Function(ufl.Coefficient):
                                       + str(type(function_space)))
 
         if isinstance(val, FunctionT):
-            assert val.function_space() == self._function_space.t
+            assert val.function_space() == self._function_space.topological
             self._value = val
         else:
-            self._value = FunctionT(self._function_space.t, val=val, name=name, dtype=dtype)
+            self._value = FunctionT(self._function_space.topological, val=val, name=name, dtype=dtype)
 
         ufl.Coefficient.__init__(self, self.function_space().ufl_element())
         self._split = None

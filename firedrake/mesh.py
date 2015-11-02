@@ -555,6 +555,9 @@ class ExtrudedMeshTopology(MeshTopology):
         :arg layers:         number of extruded cell layers in the "vertical"
                              direction.
         """
+        # A cache of function spaces that have been built on this mesh
+        self._cache = {}
+
         mesh.init()
         self._base_mesh = mesh
         if layers < 1:

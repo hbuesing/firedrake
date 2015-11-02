@@ -763,6 +763,7 @@ class MixedFunctionSpace(FunctionSpaceBase):
         mesh = meshes[0]
 
         # Get topological spaces
+        spaces = flatten(spaces)
         if mesh is mesh.topology:
             spaces = tuple(spaces)
         else:
@@ -770,25 +771,23 @@ class MixedFunctionSpace(FunctionSpaceBase):
 
         # Ask object from cache
         self = ObjectCached.__new__(cls, mesh, spaces, name)
-        if self._initialized:
-            return self
-
-        self._spaces = [IndexedFunctionSpace(s, i, self)
-                        for i, s in enumerate(flatten(spaces))]
-        self._mesh = mesh.topology
-        self._ufl_element = ufl.MixedElement(*[fs.ufl_element() for fs in self._spaces])
-        self.name = name or '_'.join(str(s.name) for s in self._spaces)
-        self._initialized = True
-        dm = PETSc.DMShell().create()
-        from firedrake.function import FunctionT
-        with FunctionT(self).dat.vec_ro as v:
-            dm.setGlobalVector(v.duplicate())
-        dm.setAttr('__fs__', weakref.ref(self))
-        dm.setCreateFieldDecomposition(self.create_field_decomp)
-        dm.setCreateSubDM(self.create_subdm)
-        self._dm = dm
-        self._ises = self.dof_dset.field_ises
-        self._subspaces = []
+        if not self._initialized:
+            self._spaces = [IndexedFunctionSpace(s, i, self)
+                            for i, s in enumerate(spaces)]
+            self._mesh = mesh.topology
+            self._ufl_element = ufl.MixedElement(*[fs.ufl_element() for fs in spaces])
+            self.name = name or '_'.join(str(s.name) for s in spaces)
+            self._initialized = True
+            dm = PETSc.DMShell().create()
+            from firedrake.function import FunctionT
+            with FunctionT(self).dat.vec_ro as v:
+                dm.setGlobalVector(v.duplicate())
+            dm.setAttr('__fs__', weakref.ref(self))
+            dm.setCreateFieldDecomposition(self.create_field_decomp)
+            dm.setCreateSubDM(self.create_subdm)
+            self._dm = dm
+            self._ises = self.dof_dset.field_ises
+            self._subspaces = []
 
         if mesh is not mesh.topology:
             self = WithGeometry(self, mesh)

@@ -295,6 +295,9 @@ class MeshTopology(object):
         self._plex = plex
         self.name = name
 
+        # A cache of function spaces that have been built on this mesh
+        self._cache = {}
+
         # Mark exterior and interior facets
         # Note.  This must come before distribution, because otherwise
         # DMPlex will consider facets on the domain boundary to be
@@ -645,9 +648,6 @@ class MeshGeometry(object):
         """Create mesh geometry object."""
         utils._init()
         mesh = super(MeshGeometry, cls).__new__(cls)
-
-        # A cache of function spaces that have been built on this mesh
-        mesh._cache = {}
         mesh.uid = utils._new_uid()
         return mesh
 

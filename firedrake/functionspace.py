@@ -6,6 +6,7 @@ import weakref
 import coffee.base as ast
 
 from pyop2 import op2
+from pyop2.caching import ObjectCached
 from pyop2.utils import flatten
 
 from firedrake.petsc import PETSc
@@ -28,7 +29,7 @@ class FunctionSpaceMeta(type):
         return super(FunctionSpaceMeta, self).__instancecheck__(other)
 
 
-class FunctionSpaceBase(object):
+class FunctionSpaceBase(ObjectCached):
     """Base class for :class:`.FunctionSpace`, :class:`.VectorFunctionSpace` and
     :class:`.MixedFunctionSpace`.
 
@@ -50,7 +51,10 @@ class FunctionSpaceBase(object):
 
         assert mesh.ufl_cell() == element.cell()
 
-        self = super(FunctionSpaceBase, cls).__new__(cls)
+        self = super(FunctionSpaceBase, cls).__new__(cls, mesh, element, name, shape)
+        if self._initialized:
+            return self
+
         self._mesh = mesh
         self._ufl_element = element
         self.name = name
@@ -149,7 +153,18 @@ class FunctionSpaceBase(object):
         self._exterior_facet_map_cache = {}
         self._interior_facet_map_cache = {}
 
+        self._initialized = True
         return self
+
+    @classmethod
+    def _process_args(cls, *args, **kwargs):
+        # Already processed
+        return args, kwargs
+
+    @classmethod
+    def _cache_key(cls, element, name=None, shape=()):
+        # Key on processed arguments
+        return element, name, shape
 
     @property
     def index(self):

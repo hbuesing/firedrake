@@ -103,7 +103,8 @@ class FunctionSpaceBase(object):
         dm.setAttr('__fs__', weakref.ref(self))
         dm.setPointSF(mesh._plex.getPointSF())
         # Create the PetscSection mapping topological entities to DoFs
-        sec = mesh.make_global_numbering(dofs_per_entity)
+        sec = mesh._plex.createSection([1], dofs_per_entity,
+                                       perm=mesh._plex_renumbering)
         dm.setDefaultSection(sec)
         self._global_numbering = sec
         self._dm = dm

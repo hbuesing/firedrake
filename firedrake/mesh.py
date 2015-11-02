@@ -489,11 +489,6 @@ class MeshTopology(object):
                                      self.cell_closure,
                                      fiat_element)
 
-    def make_global_numbering(self, dofs_per_entity):
-        # Create the PetscSection mapping topological entities to DoFs
-        return self._plex.createSection([1], dofs_per_entity,
-                                        perm=self._plex_renumbering)
-
     def _order_data_by_cell_index(self, column_list, cell_data):
         return cell_data[column_list]
 

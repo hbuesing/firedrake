@@ -60,7 +60,7 @@ class MeshHierarchy(object):
                 scale = m._icosahedral_sphere / np.linalg.norm(coords, axis=1).reshape(-1, 1)
                 coords *= scale
 
-        hierarchy = [m] + [mesh.Mesh(dm, dim=m.ufl_cell().geometric_dimension(),
+        hierarchy = [m] + [mesh.Mesh(dm, dim=m.topology.ufl_cell().geometric_dimension(),
                                      distribute=False, reorder=reorder)
                            for i, dm in enumerate(dm_hierarchy)]
         self._hierarchy = tuple([set_level(o, self, lvl)
@@ -86,7 +86,6 @@ class MeshHierarchy(object):
             P1c = functionspace.FunctionSpace(mc, 'CG', 1)
             P1f = functionspace.FunctionSpace(mf, 'CG', 1)
             self._cells_vperm.append(impl.compute_orientations(P1c, P1f, c2f))
-            print self._cells_vperm[-1]
 
     def __iter__(self):
         """Iterate over the hierarchy of meshes from coarsest to finest"""

@@ -21,7 +21,7 @@ class MeshHierarchy(object):
         :arg reorder: optional flag indicating whether to reorder the
              refined meshes.
         """
-        if m.ufl_cell().cellname() not in ["triangle", "interval"]:
+        if m.topology.ufl_cell().cellname() not in ["triangle", "interval"]:
             raise NotImplementedError("Only supported on intervals and triangles")
         m._plex.setRefinementUniform(True)
         dm_hierarchy = []
@@ -86,6 +86,7 @@ class MeshHierarchy(object):
             P1c = functionspace.FunctionSpace(mc, 'CG', 1)
             P1f = functionspace.FunctionSpace(mf, 'CG', 1)
             self._cells_vperm.append(impl.compute_orientations(P1c, P1f, c2f))
+            print self._cells_vperm[-1]
 
     def __iter__(self):
         """Iterate over the hierarchy of meshes from coarsest to finest"""

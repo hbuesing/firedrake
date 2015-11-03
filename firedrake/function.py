@@ -253,6 +253,11 @@ class Function(ufl.Coefficient):
         """The underlying coordinateless function."""
         return self._value
 
+    @property
+    def topological(self):
+        """The underlying coordinateless function."""
+        return self._value
+
     def __getattr__(self, name):
         return getattr(self.t, name)
 

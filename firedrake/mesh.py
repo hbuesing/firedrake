@@ -318,6 +318,7 @@ class MeshTopology(object):
         cStart, cEnd = plex.getHeightStratum(0)  # cells
         cell_nfacets = plex.getConeSize(cStart)
 
+        self._grown_halos = False
         self._ufl_cell = ufl.Cell(fiat_utils._cells[dim][cell_nfacets])
 
         def callback(self):
@@ -325,6 +326,7 @@ class MeshTopology(object):
             del self._callback
             if op2.MPI.comm.size > 1:
                 self._plex.distributeOverlap(1)
+            self._grown_halos = True
 
             if reorder:
                 with timed_region("Mesh: reorder"):
@@ -366,6 +368,11 @@ class MeshTopology(object):
     @property
     def topology(self):
         """The underlying mesh topology object."""
+        return self
+
+    @property
+    def topological(self):
+        """Alias of topology."""
         return self
 
     @property
@@ -699,6 +706,11 @@ class MeshGeometry(object):
     @property
     def topology(self):
         """The underlying mesh topology object."""
+        return self._topology
+
+    @property
+    def topological(self):
+        """Alias of topology."""
         return self._topology
 
     def ufl_domain(self):

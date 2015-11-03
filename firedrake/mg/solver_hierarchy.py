@@ -34,6 +34,11 @@ def coarsen_problem(problem):
     return new_problem
 
 
+def shit_just_got_real(x):
+    hierarchy, level = utils.get_level(x)
+    return hierarchy[level]
+
+
 def create_interpolation(dmc, dmf):
     _, clvl = utils.get_level(dmc)
     _, flvl = utils.get_level(dmf)
@@ -41,8 +46,8 @@ def create_interpolation(dmc, dmf):
     cctx = dmc.getAppCtx()
     fctx = dmf.getAppCtx()
 
-    V_c = dmc.getAttr("__fs__")()
-    V_f = dmf.getAttr("__fs__")()
+    V_c = shit_just_got_real(dmc)
+    V_f = shit_just_got_real(dmf)
 
     nrow = sum(x.dof_dset.size * x.dof_dset.cdim for x in V_f)
     ncol = sum(x.dof_dset.size * x.dof_dset.cdim for x in V_c)
@@ -112,8 +117,8 @@ def create_injection(dmc, dmf):
 
     cctx = dmc.getAppCtx()
 
-    V_c = dmc.getAttr("__fs__")()
-    V_f = dmf.getAttr("__fs__")()
+    V_c = shit_just_got_real(dmc)
+    V_f = shit_just_got_real(dmf)
 
     nrow = sum(x.dof_dset.size * x.dof_dset.cdim for x in V_f)
     ncol = sum(x.dof_dset.size * x.dof_dset.cdim for x in V_c)

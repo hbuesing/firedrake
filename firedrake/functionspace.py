@@ -968,10 +968,13 @@ class IndexedVFS(FunctionSpaceBase):
         if index > 2:
             raise NotImplementedError("Indexing VFS not implemented for index > 2")
         element = parent._ufl_element.sub_elements()[0]
-        self = super(IndexedVFS, cls).__new__(cls, parent.mesh(), element)
+        self = object.__new__(cls)
+        self._delegate = FunctionSpace(parent.mesh(), element)
         self._parent = parent
         self._index = index
         self._fs = parent
+        self.node_set
+        self.dof_dset
         return self
 
     @property
@@ -980,14 +983,12 @@ class IndexedVFS(FunctionSpaceBase):
         :class:`.MixedFunctionSpace` it was extracted from."""
         return self._index
 
-    # @classmethod
-    # def _cache_key(self, parent, index):
-    #     return parent, index
+    @utils.cached_property
+    def node_set(self):
+        return self._parent.node_set
 
-    # TODO?
-    # @utils.cached_property
-    # def node_set(self):
-    #     return self._parent.node_set
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
 
 
 class IndexedFunctionSpace(FunctionSpaceBase):

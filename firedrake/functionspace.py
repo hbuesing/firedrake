@@ -13,6 +13,7 @@ from firedrake.petsc import PETSc
 from firedrake import dmplex
 import firedrake.extrusion_utils as eutils
 from firedrake import fiat_utils
+import firedrake.mesh as mesh_t
 from firedrake import halo
 from firedrake import utils
 
@@ -23,6 +24,17 @@ __all__ = ['FunctionSpace', 'VectorFunctionSpace',
 
 
 class FunctionSpaceMeta(type):
+    """Metaclass for function spaces.
+
+    All function space functionality requires only a mesh topology,
+    the only exceptions are:
+      .mesh()
+      .ufl_element()
+    :class:`WithGeometry` decorates a function space with a mesh
+    geometry, overriding the above methods.  Since instance checks for
+    various kinds of function spaces are very common, this metaclass
+    makes sure they also work via the geometry decorator.
+    """
     def __instancecheck__(self, other):
         if isinstance(other, WithGeometry):
             other = other.topological
@@ -43,7 +55,7 @@ class FunctionSpaceBase(ObjectCached):
 
     def __new__(cls, mesh, element, name=None, shape=()):
         """
-        :param mesh: :class:`MeshT` to build this space on
+        :param mesh: :class:`MeshTopology` to build this space on
         :param element: :class:`ufl.FiniteElementBase` to build this space from
         :param name: user-defined name for this space
         :param shape: shape of a :class:`.VectorFunctionSpace` or :class:`.TensorFunctionSpace`
@@ -282,8 +294,7 @@ class FunctionSpaceBase(ObjectCached):
             parent = None
 
         facet_set = self._mesh.exterior_facets.set
-        from firedrake.mesh import ExtrudedMeshTopology as ExtrudedMesh
-        if isinstance(self._mesh, ExtrudedMesh):
+        if isinstance(self._mesh, mesh_t.ExtrudedMeshTopology):
             name = "extruded_exterior_facet_node"
             offset = self.offset
         else:
@@ -391,8 +402,7 @@ class FunctionSpaceBase(ObjectCached):
                         decorate = True
                 node_list_bc = np.arange(self.node_count, dtype=np.int32)
                 # Fix up for extruded, doesn't commute with indexedvfs for now
-                from firedrake.mesh import ExtrudedMeshTopology as ExtrudedMesh
-                if isinstance(self.mesh(), ExtrudedMesh):
+                if isinstance(self.mesh(), mesh_t.ExtrudedMeshTopology):
                     node_list_bc[bcids] = -10000000
                 else:
                     node_list_bc[bcids] = -(negids + 1)
@@ -493,8 +503,7 @@ class FunctionSpaceBase(ObjectCached):
                      facet_dat(op2.WRITE),
                      local_facet_dat(op2.READ))
 
-        from firedrake.mesh import ExtrudedMeshTopology as ExtrudedMesh
-        if isinstance(self._mesh, ExtrudedMesh):
+        if isinstance(self._mesh, mesh_t.ExtrudedMeshTopology):
             offset = self.offset[boundary_dofs[0]]
         else:
             offset = None
@@ -612,18 +621,17 @@ class FunctionSpace(FunctionSpaceBase):
     def __new__(cls, mesh, family, degree=None, name=None, vfamily=None, vdegree=None):
         """Create a function space
 
-        :arg mesh: :class:`.Mesh` to build the function space on
+        :arg mesh: mesh to build the function space on
         :arg family: string describing function space family, or an
             :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`
         :arg degree: degree of the function space
         :arg name: (optional) name of the function space
         :arg vfamily: family of function space in vertical dimension
-            (:class:`.ExtrudedMesh`\es only)
+            (extruded meshes only)
         :arg vdegree: degree of function space in vertical dimension
-            (:class:`.ExtrudedMesh`\es only)
+            (extruded meshes only)
 
-        If the mesh is an :class:`.ExtrudedMesh`, and the ``family``
-        argument is a
+        If the mesh is an extruded mesh, and the ``family`` argument is a
         :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`,
         ``degree``, ``vfamily`` and ``vdegree`` are ignored, since the
         ``family`` provides all necessary information, otherwise a
@@ -633,11 +641,8 @@ class FunctionSpace(FunctionSpaceBase):
         provided, the vertical element defaults to the same as the
         (``family``, ``degree``) pair.
 
-        If the mesh is not an :class:`.ExtrudedMesh`, the ``family`` must be
-        a string describing the finite element family to use, and the
-        ``degree`` must be provided, ``vfamily`` and ``vdegree`` are ignored in
-        this case.
-
+        If the mesh is not an extruded mesh, ``vfamily`` and
+        ``vdegree`` are ignored.
         """
         mesh.init()
         mesh_t = mesh.topology

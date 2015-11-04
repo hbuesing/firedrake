@@ -372,7 +372,9 @@ class MeshTopology(object):
 
     @property
     def topological(self):
-        """Alias of topology."""
+        """Alias of topology.
+
+        This is to ensure consistent naming for some multigrid codes."""
         return self
 
     @property
@@ -505,7 +507,7 @@ class MeshTopology(object):
     def cell_orientations(self):
         """Return the orientation of each cell in the mesh.
 
-        Use :func:`init_cell_orientations` on the mesh geometry to initialise."""
+        Use :func:`init_cell_orientations` on the mesh *geometry* to initialise."""
         if not hasattr(self, '_cell_orientations'):
             raise RuntimeError("No cell orientations found, did you forget to call init_cell_orientations?")
         return self._cell_orientations
@@ -573,11 +575,12 @@ class ExtrudedMeshTopology(MeshTopology):
         self._layers = layers + 1
         self._ufl_cell = ufl.OuterProductCell(mesh.ufl_cell(), ufl.interval)
 
+        # TODO: These attributes are copied so that FunctionSpaceBase can
+        # access them directly.  Eventually we would want a better refactoring
+        # of responsibilities between mesh and function space.
         self._plex = mesh._plex
         self._plex_renumbering = mesh._plex_renumbering
         self._entity_classes = mesh._entity_classes
-        # TODO:
-        # self._cell_numbering = mesh._cell_numbering
 
     @property
     def name(self):
@@ -669,6 +672,9 @@ class MeshGeometry(object):
         # Direct link to topology
         self._topology = coordinates.function_space().mesh()
 
+        # Cache mesh object on the coordinateless coordinates function
+        coordinates._as_coordinates = weakref.ref(self)
+
         self._coordinates = coordinates
         self._ufl_domain = ufl.Domain(coordinates)
 
@@ -710,7 +716,9 @@ class MeshGeometry(object):
 
     @property
     def topological(self):
-        """Alias of topology."""
+        """Alias of topology.
+
+        This is to ensure consistent naming for some multigrid codes."""
         return self._topology
 
     def ufl_domain(self):

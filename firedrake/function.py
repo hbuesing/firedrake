@@ -2,7 +2,6 @@ from __future__ import absolute_import
 import numpy as np
 import FIAT
 import ufl
-import weakref
 import ctypes
 from ctypes import POINTER, c_int, c_double, c_void_p
 
@@ -187,9 +186,7 @@ class CoordinatelessFunction(ufl.Coefficient):
                 return mesh
 
         from firedrake.mesh import MeshGeometry
-        mesh = MeshGeometry(self)
-        self._as_coordinates = weakref.ref(mesh)
-        return mesh
+        return MeshGeometry(self)
 
 
 class Function(ufl.Coefficient):

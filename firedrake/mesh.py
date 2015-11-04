@@ -955,9 +955,9 @@ def Mesh(meshfile, **kwargs):
             coordinates_data = dmplex.reordered_coords(plex, coordinates_fs._global_numbering,
                                                        (self.num_vertices(), geometric_dim))
 
-            coordinates = function.FunctionT(coordinates_fs,
-                                             val=coordinates_data,
-                                             name="Coordinates")
+            coordinates = function.CoordinatelessFunction(coordinates_fs,
+                                                          val=coordinates_data,
+                                                          name="Coordinates")
 
         self.__init__(coordinates)
 
@@ -1048,7 +1048,7 @@ def ExtrudedMesh(mesh, layers, layer_height=None, extrusion_type='uniform', kern
     coordinates_fs = functionspace.VectorFunctionSpace(topology, hfamily, hdegree, dim=gdim,
                                                        vfamily="Lagrange", vdegree=1)
 
-    coordinates = function.FunctionT(coordinates_fs, name="Coordinates")
+    coordinates = function.CoordinatelessFunction(coordinates_fs, name="Coordinates")
 
     eutils.make_extruded_coords(topology, mesh._coordinates, coordinates,
                                 layer_height, extrusion_type=extrusion_type, kernel=kernel)

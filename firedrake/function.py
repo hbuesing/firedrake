@@ -50,7 +50,7 @@ class _CFunction(ctypes.Structure):
                 ("sidx", c_void_p)]
 
 
-class FunctionT(ufl.Coefficient):
+class CoordinatelessFunction(ufl.Coefficient):
     """A function on a mesh topology."""
 
     def __init__(self, function_space, val=None, name=None, dtype=valuetype):
@@ -65,12 +65,12 @@ class FunctionT(ufl.Coefficient):
                (defaults to :data:`valuetype`).
         """
 
-        if isinstance(function_space, FunctionT):
+        if isinstance(function_space, CoordinatelessFunction):
             function_space = function_space.function_space()
         elif isinstance(function_space, functionspace.FunctionSpaceBase):
             pass
         else:
-            raise NotImplementedError("Can't make a FunctionT defined on a "
+            raise NotImplementedError("Can't make a CoordinatelessFunction defined on a "
                                       + str(type(function_space)))
         self._function_space = function_space
 
@@ -90,7 +90,7 @@ class FunctionT(ufl.Coefficient):
         """Extract any sub :class:`Function`\s defined on the component spaces
         of this this :class:`Function`'s :class:`FunctionSpace`."""
         if self._split is None:
-            self._split = tuple(FunctionT(fs, dat, name="%s[%d]" % (self.name(), i))
+            self._split = tuple(CoordinatelessFunction(fs, dat, name="%s[%d]" % (self.name(), i))
                                 for i, (fs, dat) in
                                 enumerate(zip(self._function_space, self.dat)))
         return self._split
@@ -108,8 +108,8 @@ class FunctionT(ufl.Coefficient):
         boundary condition application."""
         if isinstance(self.function_space(), functionspace.VectorFunctionSpace):
             fs = self.function_space().sub(i)
-            return FunctionT(fs, val=op2.DatView(self.dat, i),
-                             name="view[%d](%s)" % (i, self.name()))
+            return CoordinatelessFunction(fs, val=op2.DatView(self.dat, i),
+                                          name="view[%d](%s)" % (i, self.name()))
         return self.split()[i]
 
     @property
@@ -230,11 +230,11 @@ class Function(ufl.Coefficient):
             raise NotImplementedError("Can't make a Function defined on a "
                                       + str(type(function_space)))
 
-        if isinstance(val, FunctionT):
+        if isinstance(val, CoordinatelessFunction):
             assert val.function_space() == self._function_space.topological
             self._value = val
         else:
-            self._value = FunctionT(self._function_space.topological, val=val, name=name, dtype=dtype)
+            self._value = CoordinatelessFunction(self._function_space.topological, val=val, name=name, dtype=dtype)
 
         ufl.Coefficient.__init__(self, self.function_space().ufl_element())
         self._split = None

@@ -79,10 +79,10 @@ def test_prism_hdiv(prism_mesh, space, degree, horiz_expected, vert_expected):
     W1_h = FiniteElement("DG", "triangle", degree - 1)
 
     W0_v = FiniteElement("DG", "interval", degree - 1)
-    W0 = HDiv(OuterProductElement(W0_h, W0_v))
+    W0 = HDiv(TensorProductElement(W0_h, W0_v))
 
     W1_v = FiniteElement("CG", "interval", degree)
-    W1 = HDiv(OuterProductElement(W1_h, W1_v))
+    W1 = HDiv(TensorProductElement(W1_h, W1_v))
 
     V = FunctionSpace(prism_mesh, W0+W1)
     assert horiz_expected == V.fiat_element.horiz_facet_support_dofs()
@@ -105,10 +105,10 @@ def test_prism_hcurl(prism_mesh, space, degree, horiz_expected, vert_expected):
     W1_h = FiniteElement(space, "triangle", degree)
 
     W0_v = FiniteElement("DG", "interval", degree - 1)
-    W0 = HCurl(OuterProductElement(W0_h, W0_v))
+    W0 = HCurl(TensorProductElement(W0_h, W0_v))
 
     W1_v = FiniteElement("CG", "interval", degree)
-    W1 = HCurl(OuterProductElement(W1_h, W1_v))
+    W1 = HCurl(TensorProductElement(W1_h, W1_v))
 
     V = FunctionSpace(prism_mesh, W0+W1)
     assert horiz_expected == V.fiat_element.horiz_facet_support_dofs()

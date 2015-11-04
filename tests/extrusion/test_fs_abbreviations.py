@@ -5,12 +5,12 @@ from tests.common import *
 
 @pytest.fixture
 def opc_quad():
-    return OuterProductCell(interval, interval)
+    return TensorProductCell(interval, interval)
 
 
 @pytest.fixture
 def opc_hex():
-    return OuterProductCell(quadrilateral, interval)
+    return TensorProductCell(quadrilateral, interval)
 
 
 @pytest.mark.parametrize('degree', [1, 2])
@@ -19,7 +19,7 @@ def test_rtce_expansion(opc_quad, degree):
 
     C_elt = FiniteElement("CG", interval, degree)
     D_elt = FiniteElement("DG", interval, degree - 1)
-    expected = HCurl(OuterProductElement(C_elt, D_elt)) + HCurl(OuterProductElement(D_elt, C_elt))
+    expected = HCurl(TensorProductElement(C_elt, D_elt)) + HCurl(TensorProductElement(D_elt, C_elt))
     assert expected == actual
 
 
@@ -29,7 +29,7 @@ def test_rtcf_expansion(opc_quad, degree):
 
     C_elt = FiniteElement("CG", interval, degree)
     D_elt = FiniteElement("DG", interval, degree - 1)
-    expected = HDiv(OuterProductElement(C_elt, D_elt)) + HDiv(OuterProductElement(D_elt, C_elt))
+    expected = HDiv(TensorProductElement(C_elt, D_elt)) + HDiv(TensorProductElement(D_elt, C_elt))
     assert expected == actual
 
 
@@ -43,7 +43,7 @@ def test_nce_expansion(opc_hex, degree):
     W0_v = FiniteElement("DG", interval, degree - 1)
     W1_v = FiniteElement("CG", interval, degree)
 
-    expected = HCurl(OuterProductElement(W0_h, W0_v)) + HCurl(OuterProductElement(W1_h, W1_v))
+    expected = HCurl(TensorProductElement(W0_h, W0_v)) + HCurl(TensorProductElement(W1_h, W1_v))
     assert expected == actual
 
 
@@ -57,7 +57,7 @@ def test_ncf_expansion(opc_hex, degree):
     W0_v = FiniteElement("DG", interval, degree - 1)
     W1_v = FiniteElement("CG", interval, degree)
 
-    expected = HDiv(OuterProductElement(W0_h, W0_v)) + HDiv(OuterProductElement(W1_h, W1_v))
+    expected = HDiv(TensorProductElement(W0_h, W0_v)) + HDiv(TensorProductElement(W1_h, W1_v))
     assert expected == actual
 
 
@@ -65,10 +65,10 @@ def test_ncf_expansion(opc_hex, degree):
 @pytest.mark.parametrize('fs', ["CG", "DG"])
 @pytest.mark.parametrize('degree', [1, 2])
 def test_cg_dg_expansion(base_cell, fs, degree):
-    cell = OuterProductCell(base_cell, interval)
+    cell = TensorProductCell(base_cell, interval)
     actual = FiniteElement(fs, cell, degree)
 
-    expected = OuterProductElement(FiniteElement(fs, base_cell, degree),
+    expected = TensorProductElement(FiniteElement(fs, base_cell, degree),
                                    FiniteElement(fs, interval, degree),
                                    domain=cell)
     assert expected == actual
@@ -78,10 +78,10 @@ def test_cg_dg_expansion(base_cell, fs, degree):
 @pytest.mark.parametrize('fs', ["CG", "DG"])
 @pytest.mark.parametrize('degree', [1, 2])
 def test_cg_dg_vector_expansion(base_cell, fs, degree):
-    cell = OuterProductCell(base_cell, interval)
+    cell = TensorProductCell(base_cell, interval)
     actual = VectorElement(fs, cell, degree, dim=3)
 
-    expected = OuterProductVectorElement(FiniteElement(fs, base_cell, degree),
+    expected = TensorProductVectorElement(FiniteElement(fs, base_cell, degree),
                                          FiniteElement(fs, interval, degree),
                                          domain=cell, dim=3)
     assert expected == actual

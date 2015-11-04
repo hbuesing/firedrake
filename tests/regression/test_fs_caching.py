@@ -96,14 +96,14 @@ def test_extruded_ope_hits_cache():
     U0 = FiniteElement('DG', 'triangle', 0)
     U1 = FiniteElement('CG', 'interval', 2)
 
-    W0 = OuterProductElement(U0, U1)
+    W0 = TensorProductElement(U0, U1)
 
     W1 = FunctionSpace(e, HDiv(W0))
 
     U0 = FiniteElement('DG', 'triangle', 0)
     U1 = FiniteElement('CG', 'interval', 2)
 
-    W0 = OuterProductElement(U0, U1)
+    W0 = TensorProductElement(U0, U1)
 
     W2 = FunctionSpace(e, HDiv(W0))
 
@@ -118,14 +118,14 @@ def test_extruded_ope_misses_cache():
     U0 = FiniteElement('DG', 'triangle', 0)
     U1 = FiniteElement('CG', 'interval', 2)
 
-    W0 = OuterProductElement(U0, U1)
+    W0 = TensorProductElement(U0, U1)
 
     W1 = FunctionSpace(e, HDiv(W0))
 
     U0 = FiniteElement('CG', 'triangle', 1)
     U1 = FiniteElement('DG', 'interval', 2)
 
-    W0 = OuterProductElement(U0, U1)
+    W0 = TensorProductElement(U0, U1)
 
     W2 = FunctionSpace(e, HCurl(W0))
 
@@ -139,7 +139,7 @@ def test_extruded_ope_vfamily_hits_cache():
 
     U0 = FiniteElement('DG', 'triangle', 0)
     U1 = FiniteElement('CG', 'interval', 2)
-    W1 = FunctionSpace(e, OuterProductElement(U0, U1))
+    W1 = FunctionSpace(e, TensorProductElement(U0, U1))
 
     W2 = FunctionSpace(e, 'DG', 0, vfamily='CG', vdegree=2)
 
@@ -153,7 +153,7 @@ def test_extruded_opve_hits_cache():
 
     U0 = FiniteElement('DG', 'triangle', 0)
     U1 = FiniteElement('CG', 'interval', 2)
-    W1 = VectorFunctionSpace(e, OuterProductElement(U0, U1))
+    W1 = VectorFunctionSpace(e, TensorProductElement(U0, U1))
 
     W2 = VectorFunctionSpace(e, 'DG', 0, vfamily='CG', vdegree=2)
 
@@ -196,14 +196,14 @@ def test_extruded_mixed_fs_hits_cache():
     U0 = FiniteElement('DG', 'triangle', 0)
     U1 = FiniteElement('CG', 'interval', 2)
 
-    V0 = OuterProductElement(U0, U1)
+    V0 = TensorProductElement(U0, U1)
 
     V1 = FunctionSpace(e, HDiv(V0))
 
     U0 = FiniteElement('CG', 'triangle', 1)
     U1 = FiniteElement('DG', 'interval', 2)
 
-    V0 = OuterProductElement(U0, U1)
+    V0 = TensorProductElement(U0, U1)
 
     V2 = FunctionSpace(e, HCurl(V0))
 
@@ -222,14 +222,14 @@ def test_extruded_mixed_fs_misses_cache():
     U0 = FiniteElement('DG', 'triangle', 0)
     U1 = FiniteElement('CG', 'interval', 2)
 
-    V0 = OuterProductElement(U0, U1)
+    V0 = TensorProductElement(U0, U1)
 
     V1 = FunctionSpace(e, HDiv(V0))
 
     U0 = FiniteElement('CG', 'triangle', 1)
     U1 = FiniteElement('DG', 'interval', 2)
 
-    V0 = OuterProductElement(U0, U1)
+    V0 = TensorProductElement(U0, U1)
 
     V2 = FunctionSpace(e, HCurl(V0))
 

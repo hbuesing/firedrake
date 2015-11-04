@@ -539,7 +539,7 @@ class FunctionSpace(FunctionSpaceBase):
 
     :arg mesh: :class:`.Mesh` to build the function space on
     :arg family: string describing function space family, or an
-        :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`
+        :class:`~ufl.finiteelement.outerproductelement.TensorProductElement`
     :arg degree: degree of the function space
     :arg name: (optional) name of the function space
     :arg vfamily: family of function space in vertical dimension
@@ -549,10 +549,10 @@ class FunctionSpace(FunctionSpaceBase):
 
     If the mesh is an :class:`.ExtrudedMesh`, and the ``family``
     argument is a
-    :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`,
+    :class:`~ufl.finiteelement.outerproductelement.TensorProductElement`,
     ``degree``, ``vfamily`` and ``vdegree`` are ignored, since the
     ``family`` provides all necessary information, otherwise a
-    :class:`~ufl.finiteelement.outerproductelement.OuterProductElement`
+    :class:`~ufl.finiteelement.outerproductelement.TensorProductElement`
     is built from the (``family``, ``degree``) and (``vfamily``,
     ``vdegree``) pair.  If the ``vfamily`` and ``vdegree`` are not
     provided, the vertical element defaults to the same as the
@@ -583,7 +583,7 @@ class FunctionSpace(FunctionSpaceBase):
         # Two choices:
         # 1) pass in mesh, family, degree to generate a simple function space
         # 2) set up the function space using FiniteElement, EnrichedElement,
-        #       OuterProductElement and so on
+        #       TensorProductElement and so on
         if isinstance(family, ufl.FiniteElementBase):
             # Second case...
             element = family
@@ -599,7 +599,7 @@ class FunctionSpace(FunctionSpaceBase):
                                        domain=ufl.Cell("interval", 1),
                                        degree=vdegree)
                 # now make the OPE
-                element = ufl.OuterProductElement(la, lb)
+                element = ufl.TensorProductElement(la, lb)
             else:
                 # if not an extruded mesh, just make the element
                 element = ufl.FiniteElement(family,
@@ -639,15 +639,15 @@ class VectorFunctionSpace(FunctionSpaceBase):
         # VectorFunctionSpace dimension defaults to the geometric dimension of the mesh.
         dim = dim or mesh.ufl_cell().geometric_dimension()
 
-        if isinstance(mesh, mesh_t.ExtrudedMesh) and isinstance(family, ufl.OuterProductElement):
-            element = ufl.OuterProductVectorElement(family, dim=dim)
+        if isinstance(mesh, mesh_t.ExtrudedMesh) and isinstance(family, ufl.TensorProductElement):
+            element = ufl.TensorProductVectorElement(family, dim=dim)
         elif isinstance(mesh, mesh_t.ExtrudedMesh) and vfamily is not None and vdegree is not None:
             la = ufl.FiniteElement(family,
                                    domain=mesh._old_mesh.ufl_cell(),
                                    degree=degree)
             lb = ufl.FiniteElement(vfamily, domain=ufl.Cell("interval", 1),
                                    degree=vdegree)
-            element = ufl.OuterProductVectorElement(la, lb, dim=dim)
+            element = ufl.TensorProductVectorElement(la, lb, dim=dim)
         else:
             element = ufl.VectorElement(family, domain=mesh.ufl_cell(),
                                         degree=degree, dim=dim)

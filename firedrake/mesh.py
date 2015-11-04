@@ -661,8 +661,8 @@ class Mesh(object):
         # cell with one with the correct dimension.
         ufl_cell = self.ufl_cell()
         if value.element().value_shape()[0] != ufl_cell.geometric_dimension():
-            if isinstance(ufl_cell, ufl.OuterProductCell):
-                self._ufl_cell = ufl.OuterProductCell(ufl_cell._A, ufl_cell._B, value.element().value_shape()[0])
+            if isinstance(ufl_cell, ufl.TensorProductCell):
+                self._ufl_cell = ufl.TensorProductCell(ufl_cell._A, ufl_cell._B, value.element().value_shape()[0])
             else:
                 self._ufl_cell = ufl.Cell(ufl_cell.cellname(),
                                           geometric_dimension=value.element().value_shape()[0])
@@ -694,7 +694,7 @@ class Mesh(object):
 
         if expr.value_shape()[0] != 3:
             raise NotImplementedError('Only implemented for 3-vectors')
-        if self.ufl_cell() not in (ufl.Cell('triangle', 3), ufl.Cell("quadrilateral", 3), ufl.OuterProductCell(ufl.Cell('interval', 3), ufl.Cell('interval')), ufl.OuterProductCell(ufl.Cell('interval', 2), ufl.Cell('interval'), gdim=3)):
+        if self.ufl_cell() not in (ufl.Cell('triangle', 3), ufl.Cell("quadrilateral", 3), ufl.TensorProductCell(ufl.Cell('interval', 3), ufl.Cell('interval')), ufl.TensorProductCell(ufl.Cell('interval', 2), ufl.Cell('interval'), gdim=3)):
             raise NotImplementedError('Only implemented for triangles and quadrilaterals embedded in 3d')
 
         if hasattr(self, '_cell_orientations'):
@@ -907,14 +907,14 @@ class ExtrudedMesh(Mesh):
 
         if extrusion_type == "uniform":
             # *must* add a new dimension
-            self._ufl_cell = ufl.OuterProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1), gdim=mesh.ufl_cell().geometric_dimension() + 1)
+            self._ufl_cell = ufl.TensorProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1), gdim=mesh.ufl_cell().geometric_dimension() + 1)
 
         elif extrusion_type in ("radial", "radial_hedgehog"):
             # do not allow radial extrusion if tdim = gdim
             if mesh.ufl_cell().geometric_dimension() == mesh.ufl_cell().topological_dimension():
                 raise RuntimeError("Cannot radially-extrude a mesh with equal geometric and topological dimension")
             # otherwise, all is fine, so make cell
-            self._ufl_cell = ufl.OuterProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1))
+            self._ufl_cell = ufl.TensorProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1))
 
         else:
             # check for kernel
@@ -923,7 +923,7 @@ class ExtrudedMesh(Mesh):
             # otherwise, use the gdim that was passed in
             if gdim is None:
                 raise RuntimeError("The geometric dimension of the mesh must be specified if a custom extrusion kernel is used")
-            self._ufl_cell = ufl.OuterProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1), gdim=gdim)
+            self._ufl_cell = ufl.TensorProductCell(mesh.ufl_cell(), ufl.Cell("interval", 1), gdim=gdim)
 
         self._ufl_domain = ufl.Domain(self.ufl_cell(), data=self)
         flat_temp = fiat_utils.FlattenedElement(fiat_element)

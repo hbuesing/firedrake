@@ -63,18 +63,12 @@ class CoordinatelessFunction(ufl.Coefficient):
         :param dtype: optional data type for this :class:`Function`
                (defaults to :data:`valuetype`).
         """
-
-        if isinstance(function_space, CoordinatelessFunction):
-            function_space = function_space.function_space()
-        elif isinstance(function_space, functionspace.FunctionSpaceBase):
-            pass
-        else:
-            raise NotImplementedError("Can't make a CoordinatelessFunction defined on a "
-                                      + str(type(function_space)))
-        self._function_space = function_space
+        assert isinstance(function_space, functionspace.FunctionSpaceBase), \
+            "Can't make a CoordinatelessFunction defined on a " + str(type(function_space))
 
         ufl.Coefficient.__init__(self, function_space.ufl_element())
 
+        self._function_space = function_space
         self.uid = utils._new_uid()
         self._name = name or 'function_%d' % self.uid
         self._label = "a function"
@@ -84,6 +78,11 @@ class CoordinatelessFunction(ufl.Coefficient):
             self.dat = val
         else:
             self.dat = function_space.make_dat(val, dtype, self.name(), uid=self.uid)
+
+    @property
+    def topological(self):
+        """The underlying coordinateless function."""
+        return self
 
     def split(self):
         """Extract any sub :class:`Function`\s defined on the component spaces
@@ -228,10 +227,12 @@ class Function(ufl.Coefficient):
                                       + str(type(function_space)))
 
         if isinstance(val, CoordinatelessFunction):
-            assert val.function_space() == self._function_space.topological
-            self._value = val
+            if val.function_space() != self._function_space.topological:
+                raise ValueError("Function values have wrong function space.")
+            self._data = val
         else:
-            self._value = CoordinatelessFunction(self._function_space.topological, val=val, name=name, dtype=dtype)
+            self._data = CoordinatelessFunction(self._function_space.topological,
+                                                val=val, name=name, dtype=dtype)
 
         ufl.Coefficient.__init__(self, self.function_space().ufl_element())
         self._split = None
@@ -246,17 +247,12 @@ class Function(ufl.Coefficient):
             self.assign(function_space)
 
     @property
-    def t(self):
-        """The underlying coordinateless function."""
-        return self._value
-
-    @property
     def topological(self):
         """The underlying coordinateless function."""
-        return self._value
+        return self._data
 
     def __getattr__(self, name):
-        return getattr(self.t, name)
+        return getattr(self._data, name)
 
     def split(self):
         """Extract any sub :class:`Function`\s defined on the component spaces

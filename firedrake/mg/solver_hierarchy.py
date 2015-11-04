@@ -11,6 +11,11 @@ from . import ufl_utils
 __all__ = ["NLVSHierarchy"]
 
 
+def _fs_from_dm(x):
+    hierarchy, level = utils.get_level(x)
+    return hierarchy[level]
+
+
 def coarsen_problem(problem):
     u = problem.u
     h, lvl = utils.get_level(u)
@@ -34,11 +39,6 @@ def coarsen_problem(problem):
     return new_problem
 
 
-def shit_just_got_real(x):
-    hierarchy, level = utils.get_level(x)
-    return hierarchy[level]
-
-
 def create_interpolation(dmc, dmf):
     _, clvl = utils.get_level(dmc)
     _, flvl = utils.get_level(dmf)
@@ -46,8 +46,8 @@ def create_interpolation(dmc, dmf):
     cctx = dmc.getAppCtx()
     fctx = dmf.getAppCtx()
 
-    V_c = shit_just_got_real(dmc)
-    V_f = shit_just_got_real(dmf)
+    V_c = _fs_from_dm(dmc)
+    V_f = _fs_from_dm(dmf)
 
     nrow = sum(x.dof_dset.size * x.dof_dset.cdim for x in V_f)
     ncol = sum(x.dof_dset.size * x.dof_dset.cdim for x in V_c)
@@ -117,8 +117,8 @@ def create_injection(dmc, dmf):
 
     cctx = dmc.getAppCtx()
 
-    V_c = shit_just_got_real(dmc)
-    V_f = shit_just_got_real(dmf)
+    V_c = _fs_from_dm(dmc)
+    V_f = _fs_from_dm(dmf)
 
     nrow = sum(x.dof_dset.size * x.dof_dset.cdim for x in V_f)
     ncol = sum(x.dof_dset.size * x.dof_dset.cdim for x in V_c)

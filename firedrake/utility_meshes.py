@@ -171,7 +171,7 @@ cells are not currently supported")
     m = CircleManifoldMesh(ncells)
     coord_fs = VectorFunctionSpace(m, 'DG', 1, dim=1)
     old_coordinates = m.coordinates
-    new_coordinates = function.Function(coord_fs)
+    new_coordinates = Function(coord_fs)
 
     periodic_kernel = """double Y,pi;
             Y = 0.5*(old_coords[0][1]-old_coords[1][1]);

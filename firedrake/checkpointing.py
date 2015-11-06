@@ -35,6 +35,14 @@ class DumbCheckpoint(object):
     This object can be used in a context manager (in which case it
     closes the file when the scope is exited).
 
+    .. note::
+
+       This object contains both a PETSc ``Viewer``, used for storing
+       and loading :class:`~.Function` data, and an :class:`h5py:File`
+       opened on the same file handle.  *DO NOT* call
+       :meth:`h5py:File.close` on the latter, this will cause
+       breakages.
+
     """
     def __init__(self, name, mode=FILE_UPDATE, comm=None):
         self.comm = comm or op2.MPI.comm
@@ -44,17 +52,16 @@ class DumbCheckpoint(object):
                 raise IOError("File '%s' does not exist, cannot be opened for reading" % name)
         self.mode = mode
         self.vwr = PETSc.ViewerHDF5().create(name, mode=mode, comm=self.comm)
+        self.h5file = h5i.get_h5py_file(self.vwr)
 
     def close(self):
         """Close the checkpoint file (flushing any pending writes)"""
-        if hasattr(self, "_h5rep"):
-            del self._h5rep
+        if hasattr(self, "h5file"):
+            self.h5file.flush()
+            del self.h5file
         if hasattr(self, "vwr"):
             self.vwr.destroy()
             del self.vwr
-
-    def __del__(self):
-        self.close()
 
     def store(self, function, name=None):
         """Store a function in the checkpoint file.
@@ -75,53 +82,10 @@ class DumbCheckpoint(object):
             v.view(self.vwr)
             v.setName(oname)
             self.vwr.popGroup()
-            # Write metadata
-            obj = "/fields/%s" % name
-            name = "nprocs"
-            if not self.has_attribute(obj, name):
-                self.write_attribute(obj, name, self.comm.size)
-
-    def write_attribute(self, obj, name, val):
-        """Set an HDF5 attribute on a specified data object.
-
-        :arg obj: The path to the data object.
-        :arg name: The name of the attribute.
-        :arg val: The attribute value.
-
-        Raises :exc:`AttributeError` if writing the attribute fails.
-
-        .. note::
-
-           Only ``int``-valued attributes are supported.
-        """
-        if self.has_attribute(obj, name):
-            raise AttributeError("Cannot overwrite existing attribute '%s' on '%s'" %
-                                 (name, obj))
-        h5i.write_attribute(self.vwr, obj, name, val)
-
-    def read_attribute(self, obj, name):
-        """Read an HDF5 attribute on a specified data object.
-
-        :arg obj: The path to the data object.
-        :arg name: The name of the attribute.
-
-        Raises :exec:`AttributeError` if reading the attribute fails.
-
-        .. note::
-
-           Only ``int``-valued attributes are supported.
-        """
-        if not self.has_attribute(obj, name):
-            raise AttributeError("Attribute '%s' on '%s' not found" % (name, obj))
-        return h5i.read_attribute(self.vwr, obj, name)
-
-    def has_attribute(self, obj, name):
-        """Check for existance of an HDF5 attribute on a specified data object.
-
-        :arg obj: The path to the data object.
-        :arg name: The name of the attribute.
-        """
-        return h5i.has_attribute(self.vwr, obj, name)
+        # Write metadata
+        obj = "/fields/%s" % name
+        name = "nprocs"
+        self.write_attribute(obj, name, self.comm.size)
 
     def load(self, function, name=None):
         """Store a function from the checkpoint file.
@@ -134,7 +98,7 @@ class DumbCheckpoint(object):
             raise ValueError("Can only load functions")
         name = name or function.name()
         nprocs = self.read_attribute("/fields/%s" % name, "nprocs")
-        if nprocs is not None and nprocs != self.comm.size:
+        if nprocs != self.comm.size:
             raise ValueError("Process mismatch: written on %d, have %d" %
                              (nprocs, self.comm.size))
         with function.dat.vec as v:
@@ -145,23 +109,50 @@ class DumbCheckpoint(object):
             v.setName(oname)
             self.vwr.popGroup()
 
-    def as_h5py(self):
-        """Attempt to convert the file handle to a :class:`h5py:File`.
+    def write_attribute(self, obj, name, val):
+        """Set an HDF5 attribute on a specified data object.
 
-        This fails if h5py was not linked to the same HDF5 library as PETSc.
+        :arg obj: The path to the data object.
+        :arg name: The name of the attribute.
+        :arg val: The attribute value.
 
-        .. warning::
-
-           Explicitly closing this file, using :meth:`h5py:File.close`
-           will result in the checkpoint file being closed and PETSc
-           will probably subsequently produce an error.
-
+        Raises :exc:`AttributeError` if writing the attribute fails.
         """
-        self._h5rep = h5i.get_h5py_file(self.vwr)
-        return self._h5rep
+        try:
+            self.h5file[obj].attrs[name] = val
+        except KeyError as e:
+            raise AttributeError("Object '%s' not found" % obj)
+
+    def read_attribute(self, obj, name):
+        """Read an HDF5 attribute on a specified data object.
+
+        :arg obj: The path to the data object.
+        :arg name: The name of the attribute.
+
+        Raises :exec:`AttributeError` if reading the attribute fails.
+        """
+        try:
+            return self.h5file[obj].attrs[name]
+        except KeyError as e:
+            raise AttributeError("Attribute '%s' on '%s' not found" % (name, obj))
+
+
+    def has_attribute(self, obj, name):
+        """Check for existance of an HDF5 attribute on a specified data object.
+
+        :arg obj: The path to the data object.
+        :arg name: The name of the attribute.
+        """
+        try:
+            return (name in self.h5file[obj].attrs)
+        except KeyError:
+            return False
 
     def __enter__(self):
         return self
 
     def __exit__(self, *args):
+        self.close()
+
+    def __del__(self):
         self.close()

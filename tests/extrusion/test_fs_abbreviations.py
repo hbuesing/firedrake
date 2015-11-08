@@ -70,7 +70,7 @@ def test_cg_dg_expansion(base_cell, fs, degree):
 
     expected = TensorProductElement(FiniteElement(fs, base_cell, degree),
                                     FiniteElement(fs, interval, degree),
-                                    domain=ce`ll)
+                                    domain=cell)
     assert expected == actual
 
 

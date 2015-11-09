@@ -199,13 +199,13 @@ def apt_check(name):
 
 
 def apt_install(names):
-    log.info("Installing missing packages: %s.\n" % ", ".join(names))
+    log.info("Installing missing packages: %s." % ", ".join(names))
     subprocess.check_call(["sudo", "apt-get", "install"] + names)
 
 
 def git_clone(url):
     name = url.split(".git")[0].split("#")[0].split("/")[-1]
-    log.info("Cloning %s\n" % name)
+    log.info("Cloning %s" % name)
     spliturl = url.split("://")[1].split("#")[0].split("@")
     try:
         plainurl, branch = spliturl
@@ -218,21 +218,21 @@ def git_clone(url):
         if args.disable_ssh:
             raise Exception
         check_call(["git", "clone", "-q", "-b", branch, "git@%s:%s" % tuple(plainurl.split("/", 1))])
-        log.info("Successfully cloned %s branch %s.\n" % (name, branch))
+        log.info("Successfully cloned %s branch %s." % (name, branch))
     except:
         if not args.disable_ssh:
-            log.warn("Failed to clone %s using ssh, falling back to https.\n" % name)
+            log.warn("Failed to clone %s using ssh, falling back to https." % name)
         try:
             check_call(["git", "clone", "-b", branch, "https://%s" % plainurl])
-            log.info("Successfully cloned %s branch %s.\n" % (name, branch))
+            log.info("Successfully cloned %s branch %s." % (name, branch))
         except subprocess.CalledProcessError:
-            log.error("Failed to clone %s branch %s.\n" % (name, branch))
+            log.error("Failed to clone %s branch %s." % (name, branch))
             raise
     return name
 
 
 def clone_dependencies(name):
-    log.info("Cloning the dependencies of %s\n" % name)
+    log.info("Cloning the dependencies of %s" % name)
     deps = []
     for dep in open(name + "/requirements-git.txt", "r"):
         deps.append(git_clone(dep.strip()))
@@ -241,7 +241,7 @@ def clone_dependencies(name):
 
 def git_update(name):
     # Update the named git repo and return true if the current branch actually changed.
-    log.info("Updating the git repository for %s\n" % name)
+    log.info("Updating the git repository for %s" % name)
     os.chdir(name)
     git_sha = check_output(["git", "rev-parse", "HEAD"])
     check_call(["git", "pull"])
@@ -251,22 +251,22 @@ def git_update(name):
 
 
 def run_pip(args):
-    log.info(" ".join(sudopip + args) + "\n")
+    log.info(" ".join(sudopip + args))
     check_call(sudopip + args)
 
 
 def pip_requirements(package):
-    log.info("Installing pip dependencies for %s\n" % package)
+    log.info("Installing pip dependencies for %s" % package)
     if os.path.isfile("%s/requirements-ext.txt" % package):
         run_pip(["-r", "%s/requirements-ext.txt" % package])
     elif os.path.isfile("%s/requirements.txt" % package):
         run_pip(["-r", "%s/requirements.txt" % package])
     else:
-        log.info("No dependencies found. Skipping.\n")
+        log.info("No dependencies found. Skipping.")
 
 
 def install(package):
-    log.info("Installing %s\n" % package)
+    log.info("Installing %s" % package)
     # The following outrageous hack works around the fact that petsc cannot be installed in developer mode.
     if args.developer and package not in ["petsc/", "petsc4py/"]:
         run_pip(["-e", package])
@@ -275,7 +275,7 @@ def install(package):
 
 
 def clean(package):
-    log.info("Cleaning %s\n" % package)
+    log.info("Cleaning %s" % package)
     os.chdir(package)
     check_call(["python", "setup.py", "clean"])
     os.chdir("..")
@@ -287,7 +287,7 @@ def quit(message):
 
 
 def build_update_script():
-    log.info("Creating firedrake-update script.\n")
+    log.info("Creating firedrake-update script.")
     with open("firedrake/scripts/firedrake-install", "r") as f:
         update_script = f.read()
 
@@ -308,9 +308,9 @@ if args.rebuild_script:
 
     build_update_script()
 
-    log.info("Successfully rebuilt firedrake-update.\n\n")
+    log.info("Successfully rebuilt firedrake-update.\n")
 
-    log.info("To upgrade firedrake, run firedrake-update\n")
+    log.info("To upgrade firedrake, run firedrake-update")
     sys.exit(0)
 
 
@@ -330,7 +330,7 @@ if osname == "Darwin":
         except:
             quit("Xcode not found. Please install xcode from the App Store and try again.")
 
-        log.info("Installing command line tools...\n")
+        log.info("Installing command line tools...")
         try:
             check_call(["xcode-select", "--install"])
         except subprocess.CalledProcessError:
@@ -342,7 +342,7 @@ if osname == "Darwin":
         except:
             quit("Homebrew not found. Please install it using the instructions at http://brew.sh and then try again.")
 
-        log.info("Installing required packages via homebrew. You can safely ignore warnings that packages are already installed\n")
+        log.info("Installing required packages via homebrew. You can safely ignore warnings that packages are already installed")
         brew_install("openmpi")
         brew_install("python")
         check_call(["brew", "tap", "homebrew/python"])
@@ -354,7 +354,7 @@ if osname == "Darwin":
         brew_install("spatialindex")
 
     else:
-        log.info("Xcode and homebrew installation disabled. Proceeding on the rash assumption that packaged dependencies are in place.\n")
+        log.info("Xcode and homebrew installation disabled. Proceeding on the rash assumption that packaged dependencies are in place.")
 
 elif osname == "Linux":
     # Check for apt.
@@ -382,44 +382,44 @@ elif osname == "Linux":
             apt_install(missing_packages)
 
     except (subprocess.CalledProcessError, InstallError):
-        log.warn("apt-get not found or disabled. Proceeding on the rash assumption that your compiled dependencies are in place.\n")
-        log.info("If this is not the case, please install the following and try again:\n")
-        log.info("* A C and C++ compiler (for example gcc/g++ or clang/clang++), GNU make\n")
-        log.info("* A Fortran compiler (for PETSc)\n")
-        log.info("* MPI\n")
-        log.info("* Blas and Lapack\n")
-        log.info("* Git, Mercurial\n")
-        log.info("* Python version 2.7\n")
-        log.info("* pip and the Python headers\n")
-        log.info("* CMake\n")
-        log.info("* SWIG\n")
-        log.info("* libspatialindex and headers\n")
+        log.warn("apt-get not found or disabled. Proceeding on the rash assumption that your compiled dependencies are in place.")
+        log.info("If this is not the case, please install the following and try again:")
+        log.info("* A C and C++ compiler (for example gcc/g++ or clang/clang++), GNU make")
+        log.info("* A Fortran compiler (for PETSc)")
+        log.info("* MPI")
+        log.info("* Blas and Lapack")
+        log.info("* Git, Mercurial")
+        log.info("* Python version 2.7")
+        log.info("* pip and the Python headers")
+        log.info("* CMake")
+        log.info("* SWIG")
+        log.info("* libspatialindex and headers")
 
 else:
-    log.warn("You do not appear to be running Linux or MacOS. Please do not be surprised if this install fails.\n")
+    log.warn("You do not appear to be running Linux or MacOS. Please do not be surprised if this install fails.")
 
 
 if (args.system or args.user or args.prefix) and mode == "install":
-    log.info("Creating firedrake directory structure.\n")
+    log.info("Creating firedrake directory structure.")
     try:
         os.mkdir("firedrake")
     except OSError:
-        log.error("Failed to create firedrake directory. If there is a stale firedrake directory in the current directory, please remove it and try again.\n")
+        log.error("Failed to create firedrake directory. If there is a stale firedrake directory in the current directory, please remove it and try again.")
         raise
 
 elif not (args.system or args.user or args.prefix):
     try:
         import virtualenv
     except:
-        log.info("Installing virtualenv.\n")
+        log.info("Installing virtualenv.")
         # sys.real_prefix exists if we are already in the virtualenv
         if hasattr(sys, "real_prefix"):
             check_call(["pip", "install", "virtualenv"])
         else:
             check_call(["pip", "install", "--user", "virtualenv"])
-        quit("Virtual env installed. Please run firedrake-install again.\n")
+        quit("Virtual env installed. Please run firedrake-install again.")
     if mode == "install":
-        log.info("Creating firedrake virtualenv.\n")
+        log.info("Creating firedrake virtualenv.")
         virtualenv.create_environment("firedrake", site_packages=True)
         # For some reason virtualenv does not always install the latest pip.
         run_pip(["-U", "pip"])
@@ -512,12 +512,12 @@ build_update_script()
 
 os.chdir("../..")
 
-log.info("Successfully installed Firedrake.\n\n")
+log.info("Successfully installed Firedrake.\n")
 
-log.info("To upgrade firedrake, run firedrake/bin/firedrake-update\n")
+log.info("To upgrade firedrake, run firedrake/bin/firedrake-update")
 
 if not (args.system or args.user or args.prefix):
-    log.info("\nFiredrake has been installed in a python virtualenv. You activate it with:\n\n")
-    log.info("  . firedrake/bin/activate\n\n")
-    log.info("The virtualenv can be deactivated by running:\n\n")
-    log.info("  deactivate\n")
+    log.info("\nFiredrake has been installed in a python virtualenv. You activate it with:\n")
+    log.info("  . firedrake/bin/activate\n")
+    log.info("The virtualenv can be deactivated by running:\n")
+    log.info("  deactivate")
